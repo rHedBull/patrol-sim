@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Patrol Simulator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+
+        #header {
+            height: 40px;
+            background: #252525;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            border-bottom: 1px solid #333;
+            font-size: 15px;
+            font-weight: 600;
+            color: #ccc;
+            letter-spacing: 0.5px;
+        }
+
+        #header .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #555;
+            margin-left: 12px;
+        }
+
+        #header .status-dot.connected { background: #4caf50; }
+        #header .status-dot.disconnected { background: #f44336; }
+
+        #main {
+            display: flex;
+            height: calc(100vh - 40px - 50px);
+        }
+
+        #left-panel {
+            flex: 1;
+            position: relative;
+            border-right: 1px solid #333;
+        }
+
+        #right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #orbit-canvas-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Right panel sub-sections */
+        #robot-camera-section {
+            flex: 1;
+            position: relative;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #robot-camera-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 12px;
+            background: #252525;
+            border-bottom: 1px solid #333;
+            font-size: 12px;
+        }
+
+        #robot-camera-header .toggle-group {
+            display: flex;
+            gap: 4px;
+        }
+
+        #robot-camera-header button {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: #aaa;
+            padding: 3px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        #robot-camera-header button:hover { background: rgba(255,255,255,0.15); color: #ddd; }
+        #robot-camera-header button.active { background: rgba(76,175,80,0.4); color: #fff; }
+
+        #robot-camera-wrapper {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111;
+            min-height: 0;
+        }
+
+        #robot-canvas-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        #robot-canvas-container canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        #annotated-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: none;
+            pointer-events: none;
+        }
+
+        #detection-panel {
+            max-height: 180px;
+            overflow-y: auto;
+            background: #1e1e1e;
+            border-top: 1px solid #333;
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+
+        #detection-panel .det-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            color: #888;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        .detection-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 3px 8px;
+            margin: 2px 0;
+            background: rgba(255,255,255,0.05);
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .detection-item .det-label {
+            color: #e0e0e0;
+        }
+
+        .detection-item .det-confidence {
+            color: #4caf50;
+            font-family: monospace;
+            font-size: 11px;
+        }
+
+        .no-detections {
+            color: #555;
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        /* Controls bar */
+        #controls-bar {
+            height: 50px;
+            background: #252525;
+            border-top: 1px solid #333;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 16px;
+        }
+
+        #controls-bar button {
+            background: rgba(255,255,255,0.12);
+            border: none;
+            color: #ddd;
+            padding: 8px 18px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        #controls-bar button:hover { background: rgba(255,255,255,0.18); }
+        #controls-bar button.active {
+            background: rgba(76,175,80,0.5);
+            color: #fff;
+        }
+        #controls-bar button.stop {
+            background: rgba(244,67,54,0.5);
+            color: #fff;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #999;
+        }
+
+        .control-group label {
+            white-space: nowrap;
+        }
+
+        .control-group input[type="range"] {
+            width: 100px;
+            accent-color: #4caf50;
+        }
+
+        .control-group .value {
+            min-width: 32px;
+            text-align: right;
+            font-family: monospace;
+            color: #ccc;
+        }
+
+        .control-spacer { flex: 1; }
+
+        #target-display {
+            font-size: 12px;
+            color: #888;
+        }
+
+        #target-display span {
+            color: #ff9800;
+            font-weight: 500;
+        }
+
+        #fps-display {
+            font-size: 12px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        #fps-display span {
+            color: #4caf50;
+        }
+
+        /* Graph editor toolbar overlay on left panel */
+        #graph-toolbar {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 10;
+        }
+
+        #graph-toolbar button {
+            background: rgba(30,30,30,0.85);
+            border: 1px solid #444;
+            color: #ccc;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        #graph-toolbar button:hover { background: rgba(60,60,60,0.9); color: #fff; }
+        #graph-toolbar button.active { background: rgba(76,175,80,0.5); border-color: #4caf50; color: #fff; }
+
+        #graph-toolbar select {
+            background: rgba(30,30,30,0.85);
+            border: 1px solid #444;
+            color: #ccc;
+            padding: 6px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        #graph-toolbar select option {
+            background: #2a2a2a;
+            color: #ccc;
+        }
+
+        /* Mode indicator overlay */
+        #mode-indicator {
+            position: absolute;
+            bottom: 8px;
+            left: 8px;
+            background: rgba(30,30,30,0.85);
+            color: #aaa;
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 11px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #mode-indicator.editing { color: #ff9800; }
+
+        /* Node info tooltip */
+        #node-tooltip {
+            position: absolute;
+            background: rgba(20,20,20,0.95);
+            color: #ddd;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            pointer-events: none;
+            display: none;
+            z-index: 20;
+            border: 1px solid #444;
+        }
+
+        /* Loading overlay */
+        #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(26,26,26,0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            font-size: 16px;
+            color: #888;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        Robot Patrol Simulator
+        <div class="status-dot" id="connection-dot" title="Socket.IO disconnected"></div>
+    </div>
+
+    <div id="main">
+        <!-- Left Panel: 3D Orbit Scene -->
+        <div id="left-panel">
+            <div id="orbit-canvas-container"></div>
+            <div id="graph-toolbar">
+                <button id="btn-edit-mode" title="Toggle graph editor">Edit Graph</button>
+                <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
+                <button id="btn-save-graph" title="Save current graph">Save Graph</button>
+                <select id="graph-select" title="Load a saved graph">
+                    <option value="">-- Load Graph --</option>
+                </select>
+            </div>
+            <div id="mode-indicator">Navigate: orbit view</div>
+            <div id="node-tooltip"></div>
+            <div id="loading-overlay">Loading mesh...</div>
+        </div>
+
+        <!-- Right Panel: Robot Camera -->
+        <div id="right-panel">
+            <div id="robot-camera-section">
+                <div id="robot-camera-header">
+                    <span>Robot Camera</span>
+                    <div class="toggle-group">
+                        <button id="btn-view-3d" class="active">3D View</button>
+                        <button id="btn-view-yolo">YOLO View</button>
+                    </div>
+                </div>
+                <div id="robot-camera-wrapper">
+                    <div id="robot-canvas-container"></div>
+                    <img id="annotated-image" alt="Annotated frame">
+                </div>
+            </div>
+            <div id="detection-panel">
+                <div class="det-header">
+                    <span>Detections</span>
+                    <span id="det-count">0</span>
+                </div>
+                <div id="detection-list">
+                    <div class="no-detections">No detections</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls Bar -->
+    <div id="controls-bar">
+        <button id="btn-start-stop">Start</button>
+        <div class="control-group">
+            <label>Speed</label>
+            <input type="range" id="speed-slider" min="0.1" max="5" step="0.1" value="1.0">
+            <span class="value" id="speed-value">1.0</span>
+        </div>
+        <div id="target-display">Target: <span id="target-name">None</span></div>
+        <div class="control-spacer"></div>
+        <div id="fps-display">FPS: <span id="fps-value">0</span></div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // ========================================================================
+        // STATE
+        // ========================================================================
+
+        // Graph data: nodes and edges
+        let graphNodes = [];       // [{id, position: [x,y,z]}]
+        let graphEdges = [];       // [{from, to}]
+        let graphNodeMeshes = {};  // id -> THREE.Mesh
+        let graphEdgeLines = [];   // THREE.Line objects in scene
+
+        // Robot state
+        let robotPosition = new THREE.Vector3(0, 0.5, 0);
+        let robotYaw = 0;
+        let robotPitch = 0;
+        let robotPath = [];            // node IDs from server
+        let robotPathPositions = [];   // resolved Vector3 positions
+        let robotSplinePath = [];      // interpolated spline points
+        let robotSplineIndex = 0;
+        let robotMoving = false;
+        let robotSpeed = 1.0;
+
+        // Editor state
+        let editMode = false;
+        let connectMode = false;
+        let firstSelectedNode = null;   // for edge creation
+        let hoveredNodeId = null;
+        let selectedNodeId = null;
+
+        // Streaming state
+        let isStreaming = false;
+        let lastFrameTime = 0;
+        const FRAME_INTERVAL_MS = 100;  // 10 FPS capture rate
+
+        // Detection pipeline FPS counter
+        let fpsResultCount = 0;
+        let fpsLastReset = performance.now();
+
+        // Camera view toggle
+        let showYoloView = false;
+
+        // Target
+        let currentTargetNodeId = null;
+
+        // ========================================================================
+        // SOCKET.IO
+        // ========================================================================
+
+        const socket = io();
+
+        const connectionDot = document.getElementById('connection-dot');
+
+        socket.on('connect', () => {
+            connectionDot.classList.add('connected');
+            connectionDot.classList.remove('disconnected');
+            connectionDot.title = 'Socket.IO connected';
+        });
+
+        socket.on('disconnect', () => {
+            connectionDot.classList.remove('connected');
+            connectionDot.classList.add('disconnected');
+            connectionDot.title = 'Socket.IO disconnected';
+        });
+
+        socket.on('result', (data) => {
+            // data: {image: dataUrl, detections: [{label, confidence, bbox: [x1,y1,x2,y2]}, ...]}
+            fpsResultCount++;
+
+            // Update annotated image
+            if (data.image) {
+                const annotatedImg = document.getElementById('annotated-image');
+                annotatedImg.src = data.image;
+            }
+
+            // Update detection list
+            if (data.detections) {
+                updateDetectionList(data.detections);
+            }
+        });
+
+        socket.on('robot_path', (data) => {
+            // data: {path: [nodeId1, nodeId2, ...]}
+            if (data.path && data.path.length > 0) {
+                startRobotMovement(data.path);
+            }
+        });
+
+        // ========================================================================
+        // THREE.JS -- ORBIT VIEW (left panel)
+        // ========================================================================
+
+        const orbitContainer = document.getElementById('orbit-canvas-container');
+        const orbitScene = new THREE.Scene();
+        orbitScene.background = new THREE.Color(0x1a1a1a);
+
+        const orbitCamera = new THREE.PerspectiveCamera(
+            60,
+            orbitContainer.clientWidth / orbitContainer.clientHeight,
+            0.1,
+            1000
+        );
+        orbitCamera.position.set(10, 15, 10);
+
+        const orbitRenderer = new THREE.WebGLRenderer({ antialias: true });
+        orbitRenderer.setSize(orbitContainer.clientWidth, orbitContainer.clientHeight);
+        orbitRenderer.setPixelRatio(window.devicePixelRatio);
+        orbitRenderer.shadowMap.enabled = true;
+        orbitContainer.appendChild(orbitRenderer.domElement);
+
+        const orbitControls = new OrbitControls(orbitCamera, orbitRenderer.domElement);
+        orbitControls.enableDamping = true;
+        orbitControls.dampingFactor = 0.1;
+        orbitControls.target.set(0, 0, 0);
+
+        // Lighting for orbit scene
+        const orbitAmbient = new THREE.AmbientLight(0xffffff, 0.5);
+        orbitScene.add(orbitAmbient);
+
+        const orbitDirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        orbitDirLight.position.set(10, 20, 10);
+        orbitDirLight.castShadow = true;
+        orbitScene.add(orbitDirLight);
+
+        // Grid helper for reference
+        const gridHelper = new THREE.GridHelper(50, 50, 0x333333, 0x222222);
+        orbitScene.add(gridHelper);
+
+        // Collision mesh reference (for raycasting floor clicks)
+        let collisionMesh = null;
+
+        // ========================================================================
+        // ROBOT MARKER
+        // ========================================================================
+
+        const robotGroup = new THREE.Group();
+
+        // Robot body - orange box
+        const robotBodyGeo = new THREE.BoxGeometry(0.6, 0.4, 0.8);
+        const robotBodyMat = new THREE.MeshPhongMaterial({ color: 0xff8800 });
+        const robotBody = new THREE.Mesh(robotBodyGeo, robotBodyMat);
+        robotBody.position.y = 0.2;
+        robotGroup.add(robotBody);
+
+        // Robot heading cone (points forward)
+        const robotConeGeo = new THREE.ConeGeometry(0.15, 0.4, 8);
+        const robotConeMat = new THREE.MeshPhongMaterial({ color: 0xffcc00 });
+        const robotCone = new THREE.Mesh(robotConeGeo, robotConeMat);
+        robotCone.rotation.x = -Math.PI / 2;
+        robotCone.position.set(0, 0.3, -0.5);
+        robotGroup.add(robotCone);
+
+        // Small camera representation on top
+        const robotCamGeo = new THREE.BoxGeometry(0.2, 0.15, 0.15);
+        const robotCamMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+        const robotCam = new THREE.Mesh(robotCamGeo, robotCamMat);
+        robotCam.position.set(0, 0.47, -0.15);
+        robotGroup.add(robotCam);
+
+        robotGroup.position.copy(robotPosition);
+        orbitScene.add(robotGroup);
+
+        // ========================================================================
+        // THREE.JS -- ROBOT CAMERA (right panel)
+        // ========================================================================
+
+        const robotCanvasContainer = document.getElementById('robot-canvas-container');
+
+        const robotScene = orbitScene; // Same scene, different camera
+        const robotCamera = new THREE.PerspectiveCamera(70, 640 / 480, 0.1, 500);
+        robotCamera.position.copy(robotPosition);
+        robotCamera.position.y += 0.45; // Camera on top of robot
+
+        const robotRenderer = new THREE.WebGLRenderer({
+            antialias: true,
+            preserveDrawingBuffer: true
+        });
+        robotRenderer.setSize(640, 480);
+        robotRenderer.setPixelRatio(1); // Fixed resolution for streaming
+        robotCanvasContainer.appendChild(robotRenderer.domElement);
+
+        // ========================================================================
+        // MESH LOADING
+        // ========================================================================
+
+        const gltfLoader = new GLTFLoader();
+        const loadingOverlay = document.getElementById('loading-overlay');
+
+        gltfLoader.load(
+            '/mesh.glb',
+            (gltf) => {
+                const mesh = gltf.scene;
+                orbitScene.add(mesh);
+                collisionMesh = mesh;
+
+                // Center orbit camera on the mesh
+                const box = new THREE.Box3().setFromObject(mesh);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+
+                orbitControls.target.copy(center);
+                orbitCamera.position.set(
+                    center.x + size.x * 0.8,
+                    center.y + size.y * 1.5,
+                    center.z + size.z * 0.8
+                );
+                orbitControls.update();
+
+                // Place robot at center of mesh
+                robotPosition.set(center.x, box.min.y + 0.01, center.z);
+                robotGroup.position.copy(robotPosition);
+                updateRobotCamera();
+
+                loadingOverlay.classList.add('hidden');
+
+                // Load graph data
+                fetchGraph();
+                fetchGraphList();
+            },
+            (progress) => {
+                if (progress.total > 0) {
+                    const pct = Math.round((progress.loaded / progress.total) * 100);
+                    loadingOverlay.textContent = 'Loading mesh... ' + pct + '%';
+                }
+            },
+            (error) => {
+                console.error('Error loading mesh:', error);
+                loadingOverlay.textContent = 'Error loading mesh. Make sure mesh.glb exists.';
+            }
+        );
+
+        // ========================================================================
+        // NAVIGATION GRAPH RENDERING
+        // ========================================================================
+
+        const nodeGeometry = new THREE.SphereGeometry(0.15, 12, 12);
+        const nodeMaterialDefault = new THREE.MeshPhongMaterial({ color: 0x44cc44 });
+        const nodeMaterialHovered = new THREE.MeshPhongMaterial({ color: 0x88ff88 });
+        const nodeMaterialSelected = new THREE.MeshPhongMaterial({ color: 0xffcc00 });
+        const nodeMaterialTarget = new THREE.MeshPhongMaterial({ color: 0xff4444 });
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1 });
+        const pathHighlightMaterial = new THREE.LineBasicMaterial({ color: 0x00aaff, linewidth: 2 });
+
+        // Group for all graph objects
+        const graphGroup = new THREE.Group();
+        orbitScene.add(graphGroup);
+
+        // Active path highlight lines
+        let pathHighlightLines = [];
+
+        function renderGraph() {
+            // Clear existing graph visuals
+            while (graphGroup.children.length > 0) {
+                graphGroup.remove(graphGroup.children[0]);
+            }
+            graphNodeMeshes = {};
+            graphEdgeLines = [];
+
+            // Render nodes
+            for (const node of graphNodes) {
+                const mesh = new THREE.Mesh(nodeGeometry, nodeMaterialDefault.clone());
+                mesh.position.set(node.position[0], node.position[1], node.position[2]);
+                mesh.userData.nodeId = node.id;
+                graphGroup.add(mesh);
+                graphNodeMeshes[node.id] = mesh;
+            }
+
+            // Render edges
+            for (const edge of graphEdges) {
+                const fromNode = graphNodes.find(n => n.id === edge.from);
+                const toNode = graphNodes.find(n => n.id === edge.to);
+                if (!fromNode || !toNode) continue;
+
+                const points = [
+                    new THREE.Vector3(fromNode.position[0], fromNode.position[1], fromNode.position[2]),
+                    new THREE.Vector3(toNode.position[0], toNode.position[1], toNode.position[2])
+                ];
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, edgeMaterial);
+                line.userData.edgeFrom = edge.from;
+                line.userData.edgeTo = edge.to;
+                graphGroup.add(line);
+                graphEdgeLines.push(line);
+            }
+
+            updateNodeVisuals();
+        }
+
+        function updateNodeVisuals() {
+            for (const node of graphNodes) {
+                const mesh = graphNodeMeshes[node.id];
+                if (!mesh) continue;
+
+                if (node.id === currentTargetNodeId) {
+                    mesh.material = nodeMaterialTarget;
+                    mesh.scale.setScalar(1.3);
+                } else if (node.id === selectedNodeId) {
+                    mesh.material = nodeMaterialSelected;
+                    mesh.scale.setScalar(1.2);
+                } else if (node.id === hoveredNodeId) {
+                    mesh.material = nodeMaterialHovered;
+                    mesh.scale.setScalar(1.1);
+                } else {
+                    mesh.material = nodeMaterialDefault.clone();
+                    mesh.scale.setScalar(1.0);
+                }
+            }
+        }
+
+        function clearPathHighlight() {
+            for (const line of pathHighlightLines) {
+                orbitScene.remove(line);
+            }
+            pathHighlightLines = [];
+        }
+
+        function highlightPath(nodeIds) {
+            clearPathHighlight();
+
+            for (let i = 0; i < nodeIds.length - 1; i++) {
+                const fromNode = graphNodes.find(n => n.id === nodeIds[i]);
+                const toNode = graphNodes.find(n => n.id === nodeIds[i + 1]);
+                if (!fromNode || !toNode) continue;
+
+                const points = [
+                    new THREE.Vector3(fromNode.position[0], fromNode.position[1] + 0.05, fromNode.position[2]),
+                    new THREE.Vector3(toNode.position[0], toNode.position[1] + 0.05, toNode.position[2])
+                ];
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, pathHighlightMaterial);
+                orbitScene.add(line);
+                pathHighlightLines.push(line);
+            }
+        }
+
+        // ========================================================================
+        // CATMULL-ROM SPLINE INTERPOLATION (from indoor-walk)
+        // ========================================================================
+
+        function catmullRomSpline(points, segments) {
+            if (!segments) segments = 20;
+            if (points.length < 2) return points.slice();
+            if (points.length === 2) {
+                const result = [];
+                for (let t = 0; t <= 1; t += 1 / segments) {
+                    result.push(points[0].clone().lerp(points[1], t));
+                }
+                return result;
+            }
+
+            // Add phantom points at start and end
+            const extended = [
+                points[0].clone().sub(points[1].clone().sub(points[0])),
+                ...points,
+                points[points.length - 1].clone().add(
+                    points[points.length - 1].clone().sub(points[points.length - 2])
+                )
+            ];
+
+            const result = [];
+            for (let i = 1; i < extended.length - 2; i++) {
+                const p0 = extended[i - 1];
+                const p1 = extended[i];
+                const p2 = extended[i + 1];
+                const p3 = extended[i + 2];
+                const isLast = i === extended.length - 3;
+
+                for (let j = 0; j < segments; j++) {
+                    if (!isLast && j === segments - 1) continue;
+                    const t = j / segments;
+                    const t2 = t * t;
+                    const t3 = t2 * t;
+
+                    const x = 0.5 * (
+                        (2 * p1.x) +
+                        (-p0.x + p2.x) * t +
+                        (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+                        (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
+                    );
+                    const y = 0.5 * (
+                        (2 * p1.y) +
+                        (-p0.y + p2.y) * t +
+                        (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+                        (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
+                    );
+                    const z = 0.5 * (
+                        (2 * p1.z) +
+                        (-p0.z + p2.z) * t +
+                        (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 +
+                        (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3
+                    );
+
+                    result.push(new THREE.Vector3(x, y, z));
+                }
+            }
+            result.push(points[points.length - 1].clone());
+            return result;
+        }
+
+        function samplePathByDistance(points, speed, dt) {
+            if (points.length < 2) {
+                return points.map(p => ({
+                    pos: p,
+                    dir: new THREE.Vector3(0, 0, -1)
+                }));
+            }
+
+            const samples = [];
+            let totalDist = 0;
+            const segmentLengths = [];
+
+            for (let i = 1; i < points.length; i++) {
+                const len = points[i].distanceTo(points[i - 1]);
+                segmentLengths.push(len);
+                totalDist += len;
+            }
+
+            const stepDist = speed * dt;
+            let currentDist = 0;
+            let segIdx = 0;
+            let segStart = 0;
+
+            while (currentDist <= totalDist) {
+                while (segIdx < segmentLengths.length - 1 &&
+                       currentDist - segStart > segmentLengths[segIdx]) {
+                    segStart += segmentLengths[segIdx];
+                    segIdx++;
+                }
+
+                const segLen = segmentLengths[segIdx];
+                const t = segLen > 0 ? (currentDist - segStart) / segLen : 0;
+                const pos = points[segIdx].clone().lerp(
+                    points[segIdx + 1],
+                    Math.min(1, Math.max(0, t))
+                );
+                const dir = points[segIdx + 1].clone().sub(points[segIdx]).normalize();
+
+                samples.push({ pos, dir });
+                currentDist += stepDist;
+            }
+
+            // Final sample at end
+            samples.push({
+                pos: points[points.length - 1].clone(),
+                dir: samples.length > 0
+                    ? samples[samples.length - 1].dir.clone()
+                    : new THREE.Vector3(0, 0, -1)
+            });
+
+            return samples;
+        }
+
+        // ========================================================================
+        // ROBOT MOVEMENT
+        // ========================================================================
+
+        function startRobotMovement(nodeIds) {
+            robotPath = nodeIds;
+
+            // Resolve node IDs to 3D positions
+            robotPathPositions = [];
+            for (const id of nodeIds) {
+                const node = graphNodes.find(n => n.id === id);
+                if (node) {
+                    robotPathPositions.push(
+                        new THREE.Vector3(node.position[0], node.position[1], node.position[2])
+                    );
+                }
+            }
+
+            if (robotPathPositions.length < 2) {
+                console.warn('Path too short for movement');
+                return;
+            }
+
+            // Highlight path in orbit view
+            highlightPath(nodeIds);
+
+            // Build spline
+            const splinePoints = catmullRomSpline(robotPathPositions, 30);
+            robotSplinePath = samplePathByDistance(splinePoints, robotSpeed, 1 / 60);
+            robotSplineIndex = 0;
+            robotMoving = true;
+
+            document.getElementById('target-name').textContent = nodeIds[nodeIds.length - 1];
+            currentTargetNodeId = nodeIds[nodeIds.length - 1];
+            updateNodeVisuals();
+        }
+
+        function updateRobotMovement() {
+            if (!robotMoving || robotSplinePath.length === 0) return;
+
+            if (robotSplineIndex >= robotSplinePath.length) {
+                // Arrived
+                robotMoving = false;
+                clearPathHighlight();
+
+                // Snap to final position
+                const finalSample = robotSplinePath[robotSplinePath.length - 1];
+                robotPosition.copy(finalSample.pos);
+                robotYaw = Math.atan2(-finalSample.dir.x, -finalSample.dir.z);
+
+                currentTargetNodeId = null;
+                document.getElementById('target-name').textContent = 'None';
+                updateNodeVisuals();
+                return;
+            }
+
+            const sample = robotSplinePath[robotSplineIndex];
+            robotPosition.copy(sample.pos);
+            robotYaw = Math.atan2(-sample.dir.x, -sample.dir.z);
+
+            // Apply speed multiplier: skip frames based on speed
+            const framesToAdvance = Math.max(1, Math.round(robotSpeed));
+            robotSplineIndex += framesToAdvance;
+        }
+
+        function updateRobotMarker() {
+            robotGroup.position.copy(robotPosition);
+            robotGroup.rotation.y = robotYaw;
+        }
+
+        function updateRobotCamera() {
+            // Position camera at robot's camera location
+            robotCamera.position.set(
+                robotPosition.x,
+                robotPosition.y + 0.45,
+                robotPosition.z
+            );
+            robotCamera.rotation.order = 'YXZ';
+            robotCamera.rotation.y = robotYaw;
+            robotCamera.rotation.x = robotPitch;
+        }
+
+        // ========================================================================
+        // FRAME STREAMING
+        // ========================================================================
+
+        function captureAndSendFrame() {
+            if (!isStreaming) return;
+
+            const now = performance.now();
+            if (now - lastFrameTime < FRAME_INTERVAL_MS) return;
+            lastFrameTime = now;
+
+            // Render robot camera view
+            robotRenderer.render(robotScene, robotCamera);
+
+            // Capture as JPEG
+            const dataUrl = robotRenderer.domElement.toDataURL('image/jpeg', 0.8);
+
+            // Send via socket
+            socket.emit('frame', { image: dataUrl });
+        }
+
+        // ========================================================================
+        // GRAPH EDITOR -- RAYCASTING
+        // ========================================================================
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        function getMousePosition(event, container) {
+            const rect = container.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+
+        function getNodeAtMouse(event) {
+            getMousePosition(event, orbitContainer);
+            raycaster.setFromCamera(mouse, orbitCamera);
+
+            const nodeMeshes = Object.values(graphNodeMeshes);
+            if (nodeMeshes.length === 0) return null;
+
+            const intersects = raycaster.intersectObjects(nodeMeshes, false);
+            if (intersects.length > 0) {
+                return intersects[0].object.userData.nodeId;
+            }
+            return null;
+        }
+
+        function getFloorPosition(event) {
+            if (!collisionMesh) return null;
+
+            getMousePosition(event, orbitContainer);
+            raycaster.setFromCamera(mouse, orbitCamera);
+
+            const intersects = raycaster.intersectObject(collisionMesh, true);
+            if (intersects.length > 0) {
+                return intersects[0].point;
+            }
+            return null;
+        }
+
+        // ========================================================================
+        // GRAPH EDITOR -- EVENT HANDLERS
+        // ========================================================================
+
+        orbitContainer.addEventListener('mousemove', (e) => {
+            const nodeId = getNodeAtMouse(e);
+            if (nodeId !== hoveredNodeId) {
+                hoveredNodeId = nodeId;
+                updateNodeVisuals();
+
+                // Update tooltip
+                const tooltip = document.getElementById('node-tooltip');
+                if (nodeId !== null) {
+                    const node = graphNodes.find(n => n.id === nodeId);
+                    if (node) {
+                        tooltip.textContent = 'Node: ' + nodeId;
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = (e.clientX - orbitContainer.getBoundingClientRect().left + 15) + 'px';
+                        tooltip.style.top = (e.clientY - orbitContainer.getBoundingClientRect().top - 10) + 'px';
+                    }
+                } else {
+                    tooltip.style.display = 'none';
+                }
+            } else if (hoveredNodeId !== null) {
+                // Update tooltip position on move
+                const tooltip = document.getElementById('node-tooltip');
+                tooltip.style.left = (e.clientX - orbitContainer.getBoundingClientRect().left + 15) + 'px';
+                tooltip.style.top = (e.clientY - orbitContainer.getBoundingClientRect().top - 10) + 'px';
+            }
+
+            // Update cursor
+            orbitRenderer.domElement.style.cursor = nodeId !== null ? 'pointer' : '';
+        });
+
+        orbitContainer.addEventListener('click', (e) => {
+            const clickedNodeId = getNodeAtMouse(e);
+
+            if (connectMode) {
+                // Edge creation mode
+                if (clickedNodeId !== null) {
+                    if (firstSelectedNode === null) {
+                        // Select first node
+                        firstSelectedNode = clickedNodeId;
+                        selectedNodeId = clickedNodeId;
+                        updateNodeVisuals();
+                        updateModeIndicator('Select second node to connect');
+                    } else if (clickedNodeId !== firstSelectedNode) {
+                        // Create edge between first and second
+                        createEdge(firstSelectedNode, clickedNodeId);
+                        firstSelectedNode = null;
+                        selectedNodeId = null;
+                        connectMode = false;
+                        document.getElementById('btn-add-edge').classList.remove('active');
+                        updateNodeVisuals();
+                        updateModeIndicator(editMode ? 'Graph editor: click floor to add node' : 'Navigate: orbit view');
+                    }
+                }
+                return;
+            }
+
+            if (editMode) {
+                if (clickedNodeId !== null) {
+                    // Clicked on a node -> toggle selection
+                    if (selectedNodeId === clickedNodeId) {
+                        selectedNodeId = null;
+                    } else {
+                        selectedNodeId = clickedNodeId;
+                    }
+                    updateNodeVisuals();
+                } else {
+                    // Clicked on empty floor -> add node
+                    const floorPos = getFloorPosition(e);
+                    if (floorPos) {
+                        addNode(floorPos);
+                    }
+                }
+                return;
+            }
+
+            // Normal mode: click a node to set it as robot target
+            if (clickedNodeId !== null) {
+                setRobotTarget(clickedNodeId);
+            }
+        });
+
+        orbitContainer.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+
+            if (!editMode) return;
+
+            const clickedNodeId = getNodeAtMouse(e);
+            if (clickedNodeId !== null) {
+                deleteNode(clickedNodeId);
+            }
+        });
+
+        // ========================================================================
+        // GRAPH EDITOR -- OPERATIONS
+        // ========================================================================
+
+        async function addNode(position) {
+            const id = 'node_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+            const nodeData = {
+                id: id,
+                position: [
+                    Math.round(position.x * 100) / 100,
+                    Math.round(position.y * 100) / 100,
+                    Math.round(position.z * 100) / 100
+                ]
+            };
+
+            try {
+                const response = await fetch('/api/graph/node', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(nodeData)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    // Use server-returned data if available, otherwise use local
+                    const newNode = result.node || nodeData;
+                    graphNodes.push(newNode);
+                    renderGraph();
+                } else {
+                    console.error('Failed to add node:', await response.text());
+                }
+            } catch (e) {
+                console.error('Failed to add node:', e);
+                // Add locally anyway for responsiveness
+                graphNodes.push(nodeData);
+                renderGraph();
+            }
+        }
+
+        async function createEdge(fromId, toId) {
+            // Check if edge already exists
+            const exists = graphEdges.some(
+                e => (e.from === fromId && e.to === toId) ||
+                     (e.from === toId && e.to === fromId)
+            );
+            if (exists) return;
+
+            const edgeData = { from: fromId, to: toId };
+
+            try {
+                const response = await fetch('/api/graph/edge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(edgeData)
+                });
+
+                if (response.ok) {
+                    graphEdges.push(edgeData);
+                    renderGraph();
+                } else {
+                    console.error('Failed to create edge:', await response.text());
+                }
+            } catch (e) {
+                console.error('Failed to create edge:', e);
+                graphEdges.push(edgeData);
+                renderGraph();
+            }
+        }
+
+        async function deleteNode(nodeId) {
+            try {
+                const response = await fetch('/api/graph/node/' + encodeURIComponent(nodeId), {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    // Remove node and any connected edges
+                    graphNodes = graphNodes.filter(n => n.id !== nodeId);
+                    graphEdges = graphEdges.filter(e => e.from !== nodeId && e.to !== nodeId);
+
+                    if (selectedNodeId === nodeId) selectedNodeId = null;
+                    if (hoveredNodeId === nodeId) hoveredNodeId = null;
+
+                    renderGraph();
+                } else {
+                    console.error('Failed to delete node:', await response.text());
+                }
+            } catch (e) {
+                console.error('Failed to delete node:', e);
+                // Delete locally anyway
+                graphNodes = graphNodes.filter(n => n.id !== nodeId);
+                graphEdges = graphEdges.filter(e => e.from !== nodeId && e.to !== nodeId);
+                if (selectedNodeId === nodeId) selectedNodeId = null;
+                if (hoveredNodeId === nodeId) hoveredNodeId = null;
+                renderGraph();
+            }
+        }
+
+        function setRobotTarget(nodeId) {
+            currentTargetNodeId = nodeId;
+            document.getElementById('target-name').textContent = nodeId;
+            updateNodeVisuals();
+
+            socket.emit('robot_command', { target: nodeId });
+        }
+
+        // ========================================================================
+        // GRAPH API
+        // ========================================================================
+
+        async function fetchGraph() {
+            try {
+                const response = await fetch('/api/graph');
+                if (response.ok) {
+                    const data = await response.json();
+                    graphNodes = data.nodes || [];
+                    graphEdges = data.edges || [];
+                    renderGraph();
+
+                    // If robot has no position near any node, snap to first node
+                    if (graphNodes.length > 0) {
+                        const firstNode = graphNodes[0];
+                        const nodePos = new THREE.Vector3(
+                            firstNode.position[0],
+                            firstNode.position[1],
+                            firstNode.position[2]
+                        );
+                        const dist = robotPosition.distanceTo(nodePos);
+                        if (dist > 20) {
+                            robotPosition.copy(nodePos);
+                            updateRobotMarker();
+                            updateRobotCamera();
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch graph:', e);
+            }
+        }
+
+        async function fetchGraphList() {
+            try {
+                const response = await fetch('/api/graphs');
+                if (response.ok) {
+                    const data = await response.json();
+                    const select = document.getElementById('graph-select');
+                    // Clear existing options except first
+                    while (select.options.length > 1) {
+                        select.remove(1);
+                    }
+                    const names = data.graphs || data || [];
+                    for (const name of names) {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        select.appendChild(opt);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch graph list:', e);
+            }
+        }
+
+        async function saveGraph() {
+            const name = prompt('Graph name:', 'default');
+            if (!name) return;
+
+            try {
+                const response = await fetch('/api/graph/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+
+                if (response.ok) {
+                    fetchGraphList();
+                } else {
+                    console.error('Failed to save graph:', await response.text());
+                }
+            } catch (e) {
+                console.error('Failed to save graph:', e);
+            }
+        }
+
+        async function loadGraph(name) {
+            if (!name) return;
+
+            try {
+                const response = await fetch('/api/graph/load/' + encodeURIComponent(name), {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    graphNodes = data.nodes || [];
+                    graphEdges = data.edges || [];
+                    renderGraph();
+                } else {
+                    console.error('Failed to load graph:', await response.text());
+                }
+            } catch (e) {
+                console.error('Failed to load graph:', e);
+            }
+        }
+
+        // ========================================================================
+        // UI EVENT HANDLERS
+        // ========================================================================
+
+        // Edit mode toggle
+        const btnEditMode = document.getElementById('btn-edit-mode');
+        btnEditMode.addEventListener('click', () => {
+            editMode = !editMode;
+            btnEditMode.classList.toggle('active', editMode);
+
+            if (!editMode) {
+                connectMode = false;
+                firstSelectedNode = null;
+                selectedNodeId = null;
+                document.getElementById('btn-add-edge').classList.remove('active');
+                updateNodeVisuals();
+            }
+
+            updateModeIndicator(editMode
+                ? 'Graph editor: click floor to add node, right-click node to delete'
+                : 'Navigate: orbit view'
+            );
+        });
+
+        // Connect mode
+        const btnAddEdge = document.getElementById('btn-add-edge');
+        btnAddEdge.addEventListener('click', () => {
+            if (!editMode) {
+                editMode = true;
+                btnEditMode.classList.add('active');
+            }
+
+            connectMode = !connectMode;
+            btnAddEdge.classList.toggle('active', connectMode);
+            firstSelectedNode = null;
+            selectedNodeId = null;
+            updateNodeVisuals();
+
+            updateModeIndicator(connectMode
+                ? 'Connect mode: click first node, then second node'
+                : 'Graph editor: click floor to add node'
+            );
+        });
+
+        // Save graph
+        document.getElementById('btn-save-graph').addEventListener('click', saveGraph);
+
+        // Load graph dropdown
+        document.getElementById('graph-select').addEventListener('change', (e) => {
+            if (e.target.value) {
+                loadGraph(e.target.value);
+                e.target.value = ''; // Reset dropdown
+            }
+        });
+
+        // Camera view toggle
+        const btnView3D = document.getElementById('btn-view-3d');
+        const btnViewYolo = document.getElementById('btn-view-yolo');
+        const annotatedImage = document.getElementById('annotated-image');
+        const robotCanvas = robotRenderer.domElement;
+
+        btnView3D.addEventListener('click', () => {
+            showYoloView = false;
+            btnView3D.classList.add('active');
+            btnViewYolo.classList.remove('active');
+            robotCanvas.style.display = 'block';
+            annotatedImage.style.display = 'none';
+        });
+
+        btnViewYolo.addEventListener('click', () => {
+            showYoloView = true;
+            btnViewYolo.classList.add('active');
+            btnView3D.classList.remove('active');
+            robotCanvas.style.display = 'none';
+            annotatedImage.style.display = 'block';
+        });
+
+        // Start/Stop button
+        const btnStartStop = document.getElementById('btn-start-stop');
+        btnStartStop.addEventListener('click', () => {
+            isStreaming = !isStreaming;
+            if (isStreaming) {
+                btnStartStop.textContent = 'Stop';
+                btnStartStop.classList.add('stop');
+                btnStartStop.classList.remove('active');
+                fpsResultCount = 0;
+                fpsLastReset = performance.now();
+            } else {
+                btnStartStop.textContent = 'Start';
+                btnStartStop.classList.remove('stop');
+                btnStartStop.classList.remove('active');
+            }
+        });
+
+        // Speed slider
+        const speedSlider = document.getElementById('speed-slider');
+        const speedValue = document.getElementById('speed-value');
+        speedSlider.addEventListener('input', () => {
+            robotSpeed = parseFloat(speedSlider.value);
+            speedValue.textContent = robotSpeed.toFixed(1);
+
+            // If robot is currently moving, rebuild the spline path at new speed
+            if (robotMoving && robotPathPositions.length >= 2) {
+                const remainingPositions = robotPathPositions.slice();
+                // Insert current robot position at start
+                remainingPositions.unshift(robotPosition.clone());
+                const splinePoints = catmullRomSpline(remainingPositions, 30);
+                robotSplinePath = samplePathByDistance(splinePoints, robotSpeed, 1 / 60);
+                robotSplineIndex = 0;
+            }
+        });
+
+        // ========================================================================
+        // DETECTION LIST (safe DOM construction)
+        // ========================================================================
+
+        function updateDetectionList(detections) {
+            const listEl = document.getElementById('detection-list');
+            const countEl = document.getElementById('det-count');
+
+            countEl.textContent = String(detections.length);
+
+            // Clear existing children
+            while (listEl.firstChild) {
+                listEl.removeChild(listEl.firstChild);
+            }
+
+            if (detections.length === 0) {
+                const noDetDiv = document.createElement('div');
+                noDetDiv.className = 'no-detections';
+                noDetDiv.textContent = 'No detections';
+                listEl.appendChild(noDetDiv);
+                return;
+            }
+
+            for (const det of detections) {
+                const item = document.createElement('div');
+                item.className = 'detection-item';
+
+                const labelSpan = document.createElement('span');
+                labelSpan.className = 'det-label';
+                labelSpan.textContent = det.label;
+
+                const confSpan = document.createElement('span');
+                confSpan.className = 'det-confidence';
+                confSpan.textContent = (det.confidence * 100).toFixed(1) + '%';
+
+                item.appendChild(labelSpan);
+                item.appendChild(confSpan);
+                listEl.appendChild(item);
+            }
+        }
+
+        // ========================================================================
+        // MODE INDICATOR
+        // ========================================================================
+
+        function updateModeIndicator(text) {
+            const indicator = document.getElementById('mode-indicator');
+            indicator.textContent = text;
+            indicator.classList.toggle('editing', editMode || connectMode);
+        }
+
+        // ========================================================================
+        // RESIZE HANDLER
+        // ========================================================================
+
+        function handleResize() {
+            // Orbit view
+            const orbitW = orbitContainer.clientWidth;
+            const orbitH = orbitContainer.clientHeight;
+            if (orbitW > 0 && orbitH > 0) {
+                orbitCamera.aspect = orbitW / orbitH;
+                orbitCamera.updateProjectionMatrix();
+                orbitRenderer.setSize(orbitW, orbitH);
+            }
+
+            // Robot camera stays fixed at 640x480
+        }
+
+        window.addEventListener('resize', handleResize);
+
+        // ========================================================================
+        // FPS COUNTER
+        // ========================================================================
+
+        function updateFPSCounter() {
+            const now = performance.now();
+            const elapsed = (now - fpsLastReset) / 1000;
+            if (elapsed >= 1.0) {
+                const fps = Math.round(fpsResultCount / elapsed);
+                document.getElementById('fps-value').textContent = String(fps);
+                fpsResultCount = 0;
+                fpsLastReset = now;
+            }
+        }
+
+        // ========================================================================
+        // ANIMATION LOOP
+        // ========================================================================
+
+        let lastTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            const delta = (now - lastTime) / 1000;
+            lastTime = now;
+
+            // Update orbit controls
+            orbitControls.update();
+
+            // Update robot movement
+            updateRobotMovement();
+
+            // Update robot marker in orbit view
+            updateRobotMarker();
+
+            // Update robot camera
+            updateRobotCamera();
+
+            // Capture and send frames if streaming
+            if (isStreaming) {
+                captureAndSendFrame();
+            }
+
+            // Render orbit view
+            orbitRenderer.render(orbitScene, orbitCamera);
+
+            // Render robot camera view (only if 3D view is shown, or always for streaming)
+            if (!showYoloView || isStreaming) {
+                robotRenderer.render(robotScene, robotCamera);
+            }
+
+            // Update FPS counter
+            updateFPSCounter();
+        }
+
+        animate();
+
+        // ========================================================================
+        // INITIAL SIZE FIX
+        // ========================================================================
+
+        // Wait for layout to settle before sizing
+        requestAnimationFrame(() => {
+            handleResize();
+        });
+
+    </script>
+</body>
+</html>
