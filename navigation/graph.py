@@ -127,11 +127,12 @@ class NavGraph:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "nodes": {
-                nid: list(node.position) for nid, node in self._nodes.items()
-            },
+            "nodes": [
+                {"id": nid, "position": list(node.position)}
+                for nid, node in self._nodes.items()
+            ],
             "edges": [
-                [a, b]
+                {"from": a, "to": b}
                 for a in self._edges
                 for b in self._edges[a]
                 if a < b  # store each bidirectional edge once
@@ -141,10 +142,19 @@ class NavGraph:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NavGraph:
         graph = cls()
-        for nid, pos in data["nodes"].items():
-            graph.add_node(nid, tuple(pos))
-        for a, b in data["edges"]:
-            graph.add_edge(a, b)
+        nodes = data.get("nodes", [])
+        if isinstance(nodes, list):
+            for node in nodes:
+                graph.add_node(node["id"], tuple(node["position"]))
+        else:
+            # Legacy dict format
+            for nid, pos in nodes.items():
+                graph.add_node(nid, tuple(pos))
+        for edge in data.get("edges", []):
+            if isinstance(edge, dict):
+                graph.add_edge(edge["from"], edge["to"])
+            else:
+                graph.add_edge(edge[0], edge[1])
         return graph
 
     def save(self, path: str | Path) -> None:

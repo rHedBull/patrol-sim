@@ -555,6 +555,15 @@
         // Collision mesh reference (for raycasting floor clicks)
         let collisionMesh = null;
 
+        // Invisible floor plane for reliable raycasting (fallback when mesh raycast misses)
+        const floorPlane = new THREE.Mesh(
+            new THREE.PlaneGeometry(200, 200),
+            new THREE.MeshBasicMaterial({ visible: false })
+        );
+        floorPlane.rotation.x = -Math.PI / 2; // horizontal
+        floorPlane.position.y = 0;
+        orbitScene.add(floorPlane);
+
         // ========================================================================
         // ROBOT MARKER
         // ========================================================================
@@ -631,6 +640,12 @@
                     center.z + size.z * 0.8
                 );
                 orbitControls.update();
+
+                // Position floor plane at mesh bottom
+                floorPlane.position.y = box.min.y;
+                floorPlane.position.x = center.x;
+                floorPlane.position.z = center.z;
+                gridHelper.position.y = box.min.y;
 
                 // Place robot at center of mesh
                 robotPosition.set(center.x, box.min.y + 0.01, center.z);
@@ -1007,14 +1022,21 @@
         }
 
         function getFloorPosition(event) {
-            if (!collisionMesh) return null;
-
             getMousePosition(event, orbitContainer);
             raycaster.setFromCamera(mouse, orbitCamera);
 
-            const intersects = raycaster.intersectObject(collisionMesh, true);
-            if (intersects.length > 0) {
-                return intersects[0].point;
+            // Try mesh first
+            if (collisionMesh) {
+                const meshHits = raycaster.intersectObject(collisionMesh, true);
+                if (meshHits.length > 0) {
+                    return meshHits[0].point;
+                }
+            }
+
+            // Fallback to invisible floor plane
+            const planeHits = raycaster.intersectObject(floorPlane, false);
+            if (planeHits.length > 0) {
+                return planeHits[0].point;
             }
             return null;
         }
