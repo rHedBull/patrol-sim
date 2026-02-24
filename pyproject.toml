@@ -10,3 +10,8 @@ dependencies = [
     "numpy>=1.26.0",
     "pillow>=10.0.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
