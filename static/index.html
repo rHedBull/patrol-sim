@@ -820,7 +820,7 @@
 
         function clearPathHighlight() {
             for (const line of pathHighlightLines) {
-                orbitScene.remove(line);
+                graphGroup.remove(line);
             }
             pathHighlightLines = [];
         }
@@ -849,7 +849,7 @@
                 cyl.quaternion.setFromUnitVectors(
                     new THREE.Vector3(0, 1, 0), dir.clone().normalize()
                 );
-                orbitScene.add(cyl);
+                graphGroup.add(cyl);
                 pathHighlightLines.push(cyl);
             }
         }
@@ -1083,8 +1083,9 @@
             if (now - lastFrameTime < FRAME_INTERVAL_MS) return;
             lastFrameTime = now;
 
-            // Render robot camera with full mesh (walls visible) and robot hidden
+            // Render robot camera with full mesh (walls visible), robot and graph hidden
             robotGroup.visible = false;
+            graphGroup.visible = false;
             if (wallsHidden && fullMesh && noWallsMesh) {
                 fullMesh.visible = true;
                 noWallsMesh.visible = false;
@@ -1094,6 +1095,7 @@
             } else {
                 robotRenderer.render(robotScene, robotCamera);
             }
+            graphGroup.visible = true;
             robotGroup.visible = true;
 
             // Capture as JPEG
@@ -1929,9 +1931,10 @@
             // Render orbit view (shows no-walls mesh if toggled)
             orbitRenderer.render(orbitScene, orbitCamera);
 
-            // Render robot camera view — hide robot so it doesn't block its own camera
+            // Render robot camera view — hide robot and graph so they don't appear in POV
             if (!showYoloView || isStreaming) {
                 robotGroup.visible = false;
+                graphGroup.visible = false;
                 if (wallsHidden && fullMesh && noWallsMesh) {
                     fullMesh.visible = true;
                     noWallsMesh.visible = false;
@@ -1941,7 +1944,8 @@
                 } else {
                     robotRenderer.render(robotScene, robotCamera);
                 }
-                robotGroup.visible = true;
+                graphGroup.visible = true;
+                robotGroup.visible = liveMode && !editMode;
             }
 
             // Update FPS counter
