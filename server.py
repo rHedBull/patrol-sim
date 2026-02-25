@@ -24,6 +24,7 @@ from vision.yolo import YOLOProcessor
 # ---------------------------------------------------------------------------
 
 MESH_PATH: Path | None = None
+NO_WALLS_MESH_PATH: Path | None = None
 GRAPHS_DIR = Path(__file__).resolve().parent / "graphs"
 
 # ---------------------------------------------------------------------------
@@ -66,6 +67,13 @@ def index():
 @app.route("/mesh.glb")
 def serve_mesh():
     return send_file(str(MESH_PATH), mimetype="model/gltf-binary")
+
+
+@app.route("/mesh_no_walls.glb")
+def serve_mesh_no_walls():
+    if NO_WALLS_MESH_PATH and NO_WALLS_MESH_PATH.exists():
+        return send_file(str(NO_WALLS_MESH_PATH), mimetype="model/gltf-binary")
+    return "No walls mesh not available", 404
 
 
 # ── Graph CRUD ────────────────────────────────────────────────────────────
@@ -221,13 +229,19 @@ def handle_robot_command(data):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python server.py <mesh_path>", file=sys.stderr)
+        print("Usage: python server.py <mesh_path> [no_walls_mesh_path]", file=sys.stderr)
         sys.exit(1)
 
     MESH_PATH = Path(sys.argv[1]).resolve()
     if not MESH_PATH.exists():
         print(f"Mesh file not found: {MESH_PATH}", file=sys.stderr)
         sys.exit(1)
+
+    if len(sys.argv) >= 3:
+        NO_WALLS_MESH_PATH = Path(sys.argv[2]).resolve()
+        if not NO_WALLS_MESH_PATH.exists():
+            print(f"No-walls mesh not found: {NO_WALLS_MESH_PATH}", file=sys.stderr)
+            NO_WALLS_MESH_PATH = None
 
     GRAPHS_DIR.mkdir(exist_ok=True)
 

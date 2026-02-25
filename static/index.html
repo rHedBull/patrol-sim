@@ -361,6 +361,7 @@
                 <button id="btn-edit-mode" title="Toggle graph editor">Edit Graph</button>
                 <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
                 <button id="btn-save-graph" title="Save current graph">Save Graph</button>
+                <button id="btn-clip" title="Clip near-side geometry">Clip</button>
                 <select id="graph-select" title="Load a saved graph">
                     <option value="">-- Load Graph --</option>
                 </select>
@@ -494,9 +495,9 @@
             fpsResultCount++;
 
             // Update annotated image
-            if (data.image) {
+            if (data.annotated_frame) {
                 const annotatedImg = document.getElementById('annotated-image');
-                annotatedImg.src = data.image;
+                annotatedImg.src = data.annotated_frame;
             }
 
             // Update detection list
@@ -533,6 +534,12 @@
         orbitRenderer.setPixelRatio(window.devicePixelRatio);
         orbitRenderer.shadowMap.enabled = true;
         orbitContainer.appendChild(orbitRenderer.domElement);
+
+        // Wall toggle: switch between full mesh and no-walls mesh
+        let wallsHidden = false;
+        let meshBBox = null;
+        let fullMesh = null;
+        let noWallsMesh = null;
 
         const orbitControls = new OrbitControls(orbitCamera, orbitRenderer.domElement);
         orbitControls.enableDamping = true;
@@ -602,9 +609,9 @@
         const robotCanvasContainer = document.getElementById('robot-canvas-container');
 
         const robotScene = orbitScene; // Same scene, different camera
-        const robotCamera = new THREE.PerspectiveCamera(70, 640 / 480, 0.1, 500);
+        const robotCamera = new THREE.PerspectiveCamera(60, 640 / 480, 0.1, 500);
         robotCamera.position.copy(robotPosition);
-        robotCamera.position.y += 0.45; // Camera on top of robot
+        robotCamera.position.y += 1.0; // Camera at ~1m height
 
         const robotRenderer = new THREE.WebGLRenderer({
             antialias: true,
@@ -632,6 +639,20 @@
                 const box = new THREE.Box3().setFromObject(mesh);
                 const center = box.getCenter(new THREE.Vector3());
                 const size = box.getSize(new THREE.Vector3());
+
+                window._debugMesh = mesh;
+                window._debugBBox = {min: {x: box.min.x, y: box.min.y, z: box.min.z}, max: {x: box.max.x, y: box.max.y, z: box.max.z}, size: {x: size.x, y: size.y, z: size.z}};
+
+                meshBBox = box;
+                fullMesh = mesh;
+
+                // Load no-walls version (hidden initially)
+                gltfLoader.load('/mesh_no_walls.glb', (gltf2) => {
+                    noWallsMesh = gltf2.scene;
+                    noWallsMesh.visible = false;
+                    orbitScene.add(noWallsMesh);
+                    console.log('No-walls mesh loaded');
+                });
 
                 orbitControls.target.copy(center);
                 orbitCamera.position.set(
@@ -965,7 +986,7 @@
             // Position camera at robot's camera location
             robotCamera.position.set(
                 robotPosition.x,
-                robotPosition.y + 0.45,
+                robotPosition.y + 1.0,
                 robotPosition.z
             );
             robotCamera.rotation.order = 'YXZ';
@@ -1389,6 +1410,15 @@
         // Save graph
         document.getElementById('btn-save-graph').addEventListener('click', saveGraph);
 
+        // Toggle walls: switch between full and no-walls mesh in orbit view
+        document.getElementById('btn-clip').addEventListener('click', () => {
+            wallsHidden = !wallsHidden;
+            document.getElementById('btn-clip').classList.toggle('active', wallsHidden);
+            if (!fullMesh || !noWallsMesh) return;
+            fullMesh.visible = !wallsHidden;
+            noWallsMesh.visible = wallsHidden;
+        });
+
         // Load graph dropdown
         document.getElementById('graph-select').addEventListener('change', (e) => {
             if (e.target.value) {
@@ -1569,12 +1599,22 @@
                 captureAndSendFrame();
             }
 
-            // Render orbit view
+            // Render orbit view (shows no-walls mesh if toggled)
             orbitRenderer.render(orbitScene, orbitCamera);
 
-            // Render robot camera view (only if 3D view is shown, or always for streaming)
+            // Render robot camera view — hide robot so it doesn't block its own camera
             if (!showYoloView || isStreaming) {
-                robotRenderer.render(robotScene, robotCamera);
+                robotGroup.visible = false;
+                if (wallsHidden && fullMesh && noWallsMesh) {
+                    fullMesh.visible = true;
+                    noWallsMesh.visible = false;
+                    robotRenderer.render(robotScene, robotCamera);
+                    fullMesh.visible = false;
+                    noWallsMesh.visible = true;
+                } else {
+                    robotRenderer.render(robotScene, robotCamera);
+                }
+                robotGroup.visible = true;
             }
 
             // Update FPS counter
