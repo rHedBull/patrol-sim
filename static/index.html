@@ -360,9 +360,11 @@
             <div id="graph-toolbar">
                 <button id="btn-edit-mode" title="Toggle graph editor">Edit Graph</button>
                 <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
+                <button id="btn-set-start" title="Set selected node as start">Set Start</button>
                 <button id="btn-new-graph" title="Clear current graph">New Graph</button>
                 <button id="btn-save-graph" title="Save current graph">Save Graph</button>
-                <button id="btn-hide-walls" title="Clip near-side geometry">Hide Walls</button>
+                <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
+                <button id="btn-hide-walls" class="active" title="Clip near-side geometry">Hide Walls</button>
                 <select id="graph-select" title="Load a saved graph">
                     <option value="">-- Load Graph --</option>
                 </select>
@@ -437,6 +439,7 @@
         let graphEdges = [];       // [{from, to}]
         let graphNodeMeshes = {};  // id -> THREE.Mesh
         let graphEdgeLines = [];   // THREE.Line objects in scene
+        let startNodeId = null;    // designated start node
 
         // Robot state
         let robotPosition = new THREE.Vector3(0, 0.5, 0);
@@ -444,10 +447,9 @@
         let robotPitch = 0;
         let robotPath = [];            // node IDs from server
         let robotPathPositions = [];   // resolved Vector3 positions
-        let robotSplinePath = [];      // interpolated spline points
-        let robotSplineIndex = 0;
         let robotMoving = false;
         let robotSpeed = 1.0;
+        let robotDelta = 1 / 60;  // frame delta in seconds
 
         // Editor state
         let editMode = false;
@@ -539,7 +541,7 @@
         orbitContainer.appendChild(orbitRenderer.domElement);
 
         // Wall toggle: switch between full mesh and no-walls mesh
-        let wallsHidden = false;
+        let wallsHidden = true;
         let meshBBox = null;
         let fullMesh = null;
         let noWallsMesh = null;
@@ -648,11 +650,12 @@
 
                 meshBBox = box;
                 fullMesh = mesh;
+                fullMesh.visible = !wallsHidden;
 
-                // Load no-walls version (hidden initially)
+                // Load no-walls version
                 gltfLoader.load('/mesh_no_walls.glb', (gltf2) => {
                     noWallsMesh = gltf2.scene;
-                    noWallsMesh.visible = false;
+                    noWallsMesh.visible = wallsHidden;
                     orbitScene.add(noWallsMesh);
                     console.log('No-walls mesh loaded');
                 });
@@ -678,9 +681,15 @@
 
                 loadingOverlay.classList.add('hidden');
 
-                // Load graph data
-                fetchGraph();
-                fetchGraphList();
+                // Load graph list; auto-load default if it exists
+                fetchGraphList().then(() => {
+                    const select = document.getElementById('graph-select');
+                    const hasDefault = Array.from(select.options).some(o => o.value === 'default');
+                    if (hasDefault) {
+                        loadGraph('default');
+                    }
+                    // If no saved graphs, start with empty scene
+                });
             },
             (progress) => {
                 if (progress.total > 0) {
@@ -699,12 +708,15 @@
         // ========================================================================
 
         const nodeGeometry = new THREE.SphereGeometry(0.15, 12, 12);
+        const postGeometry = new THREE.CylinderGeometry(0.03, 0.03, 1, 8);
+        const postMaterial = new THREE.MeshPhongMaterial({ color: 0x888888 });
         const nodeMaterialDefault = new THREE.MeshPhongMaterial({ color: 0x44cc44 });
         const nodeMaterialHovered = new THREE.MeshPhongMaterial({ color: 0x88ff88 });
         const nodeMaterialSelected = new THREE.MeshPhongMaterial({ color: 0xffcc00 });
         const nodeMaterialTarget = new THREE.MeshPhongMaterial({ color: 0xff4444 });
-        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1 });
-        const pathHighlightMaterial = new THREE.LineBasicMaterial({ color: 0x00aaff, linewidth: 2 });
+        const nodeMaterialStart = new THREE.MeshPhongMaterial({ color: 0x2196f3 });
+        const edgeMaterial = new THREE.MeshPhongMaterial({ color: 0xcccccc, transparent: true, opacity: 0.7 });
+        const pathHighlightMaterial = new THREE.MeshPhongMaterial({ color: 0x00aaff });
 
         // Group for all graph objects
         const graphGroup = new THREE.Group();
@@ -712,6 +724,9 @@
 
         // Active path highlight lines
         let pathHighlightLines = [];
+
+        const NODE_HEIGHT = 0.5;  // how high above floor the node sphere sits
+        const EDGE_RADIUS = 0.02; // tube radius for edges
 
         function renderGraph() {
             // Clear existing graph visuals
@@ -721,31 +736,55 @@
             graphNodeMeshes = {};
             graphEdgeLines = [];
 
-            // Render nodes
+            // Render nodes with posts
             for (const node of graphNodes) {
+                const x = node.position[0];
+                const y = node.position[1];
+                const z = node.position[2];
+
+                // Post (vertical cylinder from floor to node)
+                const post = new THREE.Mesh(postGeometry, postMaterial);
+                post.position.set(x, y + NODE_HEIGHT / 2, z);
+                post.scale.y = NODE_HEIGHT;
+                graphGroup.add(post);
+
+                // Node sphere at top of post
                 const mesh = new THREE.Mesh(nodeGeometry, nodeMaterialDefault.clone());
-                mesh.position.set(node.position[0], node.position[1], node.position[2]);
+                mesh.position.set(x, y + NODE_HEIGHT, z);
                 mesh.userData.nodeId = node.id;
                 graphGroup.add(mesh);
                 graphNodeMeshes[node.id] = mesh;
             }
 
-            // Render edges
+            // Render edges as tubes raised to node height
             for (const edge of graphEdges) {
                 const fromNode = graphNodes.find(n => n.id === edge.from);
                 const toNode = graphNodes.find(n => n.id === edge.to);
                 if (!fromNode || !toNode) continue;
 
-                const points = [
-                    new THREE.Vector3(fromNode.position[0], fromNode.position[1], fromNode.position[2]),
-                    new THREE.Vector3(toNode.position[0], toNode.position[1], toNode.position[2])
-                ];
-                const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                const line = new THREE.Line(geometry, edgeMaterial);
-                line.userData.edgeFrom = edge.from;
-                line.userData.edgeTo = edge.to;
-                graphGroup.add(line);
-                graphEdgeLines.push(line);
+                const from = new THREE.Vector3(
+                    fromNode.position[0], fromNode.position[1] + NODE_HEIGHT, fromNode.position[2]
+                );
+                const to = new THREE.Vector3(
+                    toNode.position[0], toNode.position[1] + NODE_HEIGHT, toNode.position[2]
+                );
+
+                // Cylinder between the two points
+                const dir = to.clone().sub(from);
+                const length = dir.length();
+                const mid = from.clone().add(to).multiplyScalar(0.5);
+
+                const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
+                const cyl = new THREE.Mesh(cylGeom, edgeMaterial);
+                cyl.position.copy(mid);
+                // Align cylinder along the direction
+                cyl.quaternion.setFromUnitVectors(
+                    new THREE.Vector3(0, 1, 0), dir.clone().normalize()
+                );
+                cyl.userData.edgeFrom = edge.from;
+                cyl.userData.edgeTo = edge.to;
+                graphGroup.add(cyl);
+                graphEdgeLines.push(cyl);
             }
 
             updateNodeVisuals();
@@ -765,6 +804,9 @@
                 } else if (node.id === hoveredNodeId) {
                     mesh.material = nodeMaterialHovered;
                     mesh.scale.setScalar(1.1);
+                } else if (node.id === startNodeId) {
+                    mesh.material = nodeMaterialStart;
+                    mesh.scale.setScalar(1.2);
                 } else {
                     mesh.material = nodeMaterialDefault.clone();
                     mesh.scale.setScalar(1.0);
@@ -787,14 +829,24 @@
                 const toNode = graphNodes.find(n => n.id === nodeIds[i + 1]);
                 if (!fromNode || !toNode) continue;
 
-                const points = [
-                    new THREE.Vector3(fromNode.position[0], fromNode.position[1] + 0.05, fromNode.position[2]),
-                    new THREE.Vector3(toNode.position[0], toNode.position[1] + 0.05, toNode.position[2])
-                ];
-                const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                const line = new THREE.Line(geometry, pathHighlightMaterial);
-                orbitScene.add(line);
-                pathHighlightLines.push(line);
+                const from = new THREE.Vector3(
+                    fromNode.position[0], fromNode.position[1] + NODE_HEIGHT + 0.05, fromNode.position[2]
+                );
+                const to = new THREE.Vector3(
+                    toNode.position[0], toNode.position[1] + NODE_HEIGHT + 0.05, toNode.position[2]
+                );
+                const dir = to.clone().sub(from);
+                const length = dir.length();
+                const mid = from.clone().add(to).multiplyScalar(0.5);
+
+                const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS * 1.5, EDGE_RADIUS * 1.5, length, 6);
+                const cyl = new THREE.Mesh(cylGeom, pathHighlightMaterial);
+                cyl.position.copy(mid);
+                cyl.quaternion.setFromUnitVectors(
+                    new THREE.Vector3(0, 1, 0), dir.clone().normalize()
+                );
+                orbitScene.add(cyl);
+                pathHighlightLines.push(cyl);
             }
         }
 
@@ -919,6 +971,9 @@
         // ROBOT MOVEMENT
         // ========================================================================
 
+        // Index into robotPathPositions: the node we're currently moving toward
+        let robotPathTargetIdx = 0;
+
         function startRobotMovement(nodeIds) {
             robotPath = nodeIds;
 
@@ -941,10 +996,8 @@
             // Highlight path in orbit view
             highlightPath(nodeIds);
 
-            // Build spline
-            const splinePoints = catmullRomSpline(robotPathPositions, 30);
-            robotSplinePath = samplePathByDistance(splinePoints, robotSpeed, 1 / 60);
-            robotSplineIndex = 0;
+            // Start linear node-to-node movement
+            robotPathTargetIdx = 1;
             robotMoving = true;
 
             document.getElementById('target-name').textContent = nodeIds[nodeIds.length - 1];
@@ -953,17 +1006,15 @@
         }
 
         function updateRobotMovement() {
-            if (!robotMoving || robotSplinePath.length === 0) return;
+            if (!robotMoving || robotPathPositions.length === 0) return;
 
-            if (robotSplineIndex >= robotSplinePath.length) {
-                // Arrived
+            if (robotPathTargetIdx >= robotPathPositions.length) {
+                // Arrived at final node
                 robotMoving = false;
                 clearPathHighlight();
 
-                // Snap to final position
-                const finalSample = robotSplinePath[robotSplinePath.length - 1];
-                robotPosition.copy(finalSample.pos);
-                robotYaw = Math.atan2(-finalSample.dir.x, -finalSample.dir.z);
+                const finalPos = robotPathPositions[robotPathPositions.length - 1];
+                robotPosition.copy(finalPos);
 
                 currentTargetNodeId = null;
                 document.getElementById('target-name').textContent = 'None';
@@ -971,13 +1022,30 @@
                 return;
             }
 
-            const sample = robotSplinePath[robotSplineIndex];
-            robotPosition.copy(sample.pos);
-            robotYaw = Math.atan2(-sample.dir.x, -sample.dir.z);
+            const target = robotPathPositions[robotPathTargetIdx];
+            const dx = target.x - robotPosition.x;
+            const dy = target.y - robotPosition.y;
+            const dz = target.z - robotPosition.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-            // Apply speed multiplier: skip frames based on speed
-            const framesToAdvance = Math.max(1, Math.round(robotSpeed));
-            robotSplineIndex += framesToAdvance;
+            // Distance to move this frame (speed is units/sec, delta comes from animate loop)
+            const stepDist = robotSpeed * robotDelta;
+
+            if (dist <= stepDist) {
+                // Snap to this node and advance to next segment
+                robotPosition.copy(target);
+                if (dist > 1e-6) {
+                    robotYaw = Math.atan2(-dx, -dz);
+                }
+                robotPathTargetIdx++;
+            } else {
+                // Move toward the target node
+                const frac = stepDist / dist;
+                robotPosition.x += dx * frac;
+                robotPosition.y += dy * frac;
+                robotPosition.z += dz * frac;
+                robotYaw = Math.atan2(-dx, -dz);
+            }
         }
 
         function updateRobotMarker() {
@@ -1188,7 +1256,7 @@
                         connectMode = false;
                         document.getElementById('btn-add-edge').classList.remove('active');
                         updateNodeVisuals();
-                        updateModeIndicator(editMode ? 'Graph editor: dbl-click to add, drag to move, select + Del to remove' : 'Navigate: orbit view');
+                        updateModeIndicator(editMode ? 'Edit: dbl-click add, drag move, Del remove, right-click set start' : 'Navigate: orbit view');
                     }
                 }
                 mouseDownPos = null;
@@ -1219,6 +1287,11 @@
 
         orbitContainer.addEventListener('contextmenu', (e) => {
             e.preventDefault();
+            if (!editMode) return;
+            const nodeId = getNodeAtMouse(e);
+            if (nodeId !== null) {
+                setStartNode(nodeId);
+            }
         });
 
         // Double-click to add node in edit mode
@@ -1345,6 +1418,7 @@
                     graphEdges = [];
                     selectedNodeId = null;
                     hoveredNodeId = null;
+                    startNodeId = null;
                     renderGraph();
                 }
             } catch (e) {
@@ -1374,6 +1448,33 @@
             }
         }
 
+        async function setStartNode(nodeId) {
+            try {
+                const response = await fetch('/api/graph/start_node', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ node_id: nodeId })
+                });
+                if (response.ok) {
+                    startNodeId = nodeId;
+                    // Snap robot to start node
+                    const node = graphNodes.find(n => n.id === nodeId);
+                    if (node) {
+                        robotPosition.set(node.position[0], node.position[1], node.position[2]);
+                        robotMoving = false;
+                        clearPathHighlight();
+                        currentTargetNodeId = null;
+                        document.getElementById('target-name').textContent = 'None';
+                        updateRobotMarker();
+                        updateRobotCamera();
+                    }
+                    updateNodeVisuals();
+                }
+            } catch (e) {
+                console.error('Failed to set start node:', e);
+            }
+        }
+
         function setRobotTarget(nodeId) {
             currentTargetNodeId = nodeId;
             document.getElementById('target-name').textContent = nodeId;
@@ -1393,22 +1494,21 @@
                     const data = await response.json();
                     graphNodes = data.nodes || [];
                     graphEdges = data.edges || [];
+                    startNodeId = data.start_node || null;
                     renderGraph();
 
-                    // If robot has no position near any node, snap to first node
-                    if (graphNodes.length > 0) {
-                        const firstNode = graphNodes[0];
-                        const nodePos = new THREE.Vector3(
-                            firstNode.position[0],
-                            firstNode.position[1],
-                            firstNode.position[2]
+                    // Snap robot to start node (or first node)
+                    const spawnNode = startNodeId
+                        ? graphNodes.find(n => n.id === startNodeId)
+                        : graphNodes[0];
+                    if (spawnNode) {
+                        robotPosition.set(
+                            spawnNode.position[0],
+                            spawnNode.position[1],
+                            spawnNode.position[2]
                         );
-                        const dist = robotPosition.distanceTo(nodePos);
-                        if (dist > 20) {
-                            robotPosition.copy(nodePos);
-                            updateRobotMarker();
-                            updateRobotCamera();
-                        }
+                        updateRobotMarker();
+                        updateRobotCamera();
                     }
                 }
             } catch (e) {
@@ -1489,6 +1589,9 @@
             editMode = !editMode;
             btnEditMode.classList.toggle('active', editMode);
 
+            // Hide robot during editing, show when navigating
+            robotGroup.visible = !editMode;
+
             if (!editMode) {
                 connectMode = false;
                 firstSelectedNode = null;
@@ -1498,7 +1601,7 @@
             }
 
             updateModeIndicator(editMode
-                ? 'Graph editor: dbl-click to add, drag to move, select + Del to remove'
+                ? 'Edit: dbl-click add, drag move, Del remove, right-click set start'
                 : 'Navigate: orbit view'
             );
         });
@@ -1519,8 +1622,17 @@
 
             updateModeIndicator(connectMode
                 ? 'Connect mode: click first node, then second node'
-                : 'Graph editor: dbl-click to add, drag to move, select + Del to remove'
+                : 'Edit: dbl-click add, drag move, Del remove, right-click set start'
             );
+        });
+
+        // Set start node button
+        document.getElementById('btn-set-start').addEventListener('click', () => {
+            if (selectedNodeId) {
+                setStartNode(selectedNodeId);
+            } else {
+                updateModeIndicator('Select a node first, then click Set Start');
+            }
         });
 
         // Save graph
@@ -1530,6 +1642,31 @@
         document.getElementById('btn-new-graph').addEventListener('click', () => {
             if (graphNodes.length > 0 && !confirm('Clear current graph?')) return;
             clearGraph();
+        });
+
+        // Delete graph
+        document.getElementById('btn-delete-graph').addEventListener('click', async () => {
+            const names = await fetch('/api/graphs').then(r => r.json());
+            if (names.length === 0) {
+                alert('No saved graphs to delete.');
+                return;
+            }
+            const name = prompt('Delete which graph?\n\nSaved: ' + names.join(', '));
+            if (!name) return;
+            if (!confirm('Permanently delete graph "' + name + '"?')) return;
+            try {
+                const resp = await fetch('/api/graph/delete/' + encodeURIComponent(name), { method: 'DELETE' });
+                if (resp.ok) {
+                    fetchGraphList();
+                    // Also clear the active graph
+                    await clearGraph();
+                } else {
+                    const err = await resp.json();
+                    alert(err.error || 'Failed to delete graph');
+                }
+            } catch (e) {
+                console.error('Failed to delete graph:', e);
+            }
         });
 
         // Toggle walls: switch between full and no-walls mesh in orbit view
@@ -1594,16 +1731,6 @@
         speedSlider.addEventListener('input', () => {
             robotSpeed = parseFloat(speedSlider.value);
             speedValue.textContent = robotSpeed.toFixed(1);
-
-            // If robot is currently moving, rebuild the spline path at new speed
-            if (robotMoving && robotPathPositions.length >= 2) {
-                const remainingPositions = robotPathPositions.slice();
-                // Insert current robot position at start
-                remainingPositions.unshift(robotPosition.clone());
-                const splinePoints = catmullRomSpline(remainingPositions, 30);
-                robotSplinePath = samplePathByDistance(splinePoints, robotSpeed, 1 / 60);
-                robotSplineIndex = 0;
-            }
         });
 
         // ========================================================================
@@ -1703,6 +1830,7 @@
             const now = performance.now();
             const delta = (now - lastTime) / 1000;
             lastTime = now;
+            robotDelta = Math.min(delta, 0.1);  // clamp to avoid big jumps
 
             // Update orbit controls
             orbitControls.update();

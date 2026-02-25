@@ -22,6 +22,7 @@ class NavGraph:
     def __init__(self) -> None:
         self._nodes: dict[str, Node] = {}
         self._edges: dict[str, set[str]] = {}
+        self.start_node: str | None = None
 
     @property
     def nodes(self) -> dict[str, list[float]]:
@@ -42,6 +43,8 @@ class NavGraph:
             self._edges[neighbor].discard(id)
         del self._edges[id]
         del self._nodes[id]
+        if self.start_node == id:
+            self.start_node = None
 
     def get_node(self, id: str) -> Node:
         if id not in self._nodes:
@@ -126,7 +129,7 @@ class NavGraph:
     # ── Serialization ────────────────────────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "nodes": [
                 {"id": nid, "position": list(node.position)}
                 for nid, node in self._nodes.items()
@@ -138,6 +141,9 @@ class NavGraph:
                 if a < b  # store each bidirectional edge once
             ],
         }
+        if self.start_node is not None:
+            d["start_node"] = self.start_node
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NavGraph:
@@ -155,6 +161,9 @@ class NavGraph:
                 graph.add_edge(edge["from"], edge["to"])
             else:
                 graph.add_edge(edge[0], edge[1])
+        start = data.get("start_node")
+        if start and start in graph._nodes:
+            graph.start_node = start
         return graph
 
     def save(self, path: str | Path) -> None:

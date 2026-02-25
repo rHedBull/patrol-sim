@@ -44,12 +44,12 @@ vision: YOLOProcessor | None = None
 
 
 def _reset_robot() -> None:
-    """(Re-)create the robot at the first node of the current graph."""
+    """(Re-)create the robot at the start node (or first node) of the current graph."""
     global robot
     nodes = nav_graph.nodes
     if nodes:
-        first_node = next(iter(nodes))
-        robot = Robot(nav_graph, first_node)
+        start = nav_graph.start_node if nav_graph.start_node else next(iter(nodes))
+        robot = Robot(nav_graph, start)
     else:
         robot = None
 
@@ -81,7 +81,9 @@ def serve_mesh_no_walls():
 
 @app.route("/api/graph", methods=["GET"])
 def get_graph():
-    return jsonify(nav_graph.to_dict())
+    data = nav_graph.to_dict()
+    data["start_node"] = nav_graph.start_node
+    return jsonify(data)
 
 
 @app.route("/api/graph", methods=["DELETE"])
@@ -133,6 +135,17 @@ def delete_node(node_id: str):
     return jsonify({"ok": True})
 
 
+@app.route("/api/graph/start_node", methods=["PUT"])
+def set_start_node():
+    data = request.get_json(force=True)
+    node_id = data.get("node_id")
+    if node_id and node_id not in nav_graph.nodes:
+        return jsonify({"error": f"Node '{node_id}' not found"}), 404
+    nav_graph.start_node = node_id
+    _reset_robot()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/graph/edge", methods=["POST"])
 def add_edge():
     data = request.get_json(force=True)
@@ -170,6 +183,19 @@ def load_graph(name: str):
 def list_graphs():
     names = sorted(p.stem for p in GRAPHS_DIR.glob("*.json"))
     return jsonify(names)
+
+
+@app.route("/api/graph/delete/<name>", methods=["DELETE"])
+def delete_graph(name: str):
+    global nav_graph, robot
+    path = GRAPHS_DIR / f"{name}.json"
+    if not path.exists():
+        return jsonify({"error": f"Graph '{name}' not found"}), 404
+    path.unlink()
+    # Clear in-memory graph too
+    nav_graph = NavGraph()
+    robot = None
+    return jsonify({"ok": True})
 
 
 # ── Robot ─────────────────────────────────────────────────────────────────
