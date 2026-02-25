@@ -261,6 +261,11 @@ def handle_robot_command(data):
         emit("robot_path", {"error": "Missing 'target' field"})
         return
 
+    # Client can tell us where the robot currently is
+    from_node = data.get("from_node")
+    if from_node and from_node in nav_graph.nodes:
+        robot.current_node = from_node
+
     path = robot.set_target(target)
     if path is None:
         emit("robot_path", {"error": f"No path to node '{target}'"})

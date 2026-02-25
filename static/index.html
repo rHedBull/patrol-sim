@@ -450,6 +450,10 @@
         let robotMoving = false;
         let robotSpeed = 1.0;
         let robotDelta = 1 / 60;  // frame delta in seconds
+        let robotCurrentNode = null;   // last node the robot arrived at
+
+        // Live mode: robot is active and navigating
+        let liveMode = false;
 
         // Editor state
         let editMode = false;
@@ -1015,6 +1019,7 @@
 
                 const finalPos = robotPathPositions[robotPathPositions.length - 1];
                 robotPosition.copy(finalPos);
+                robotCurrentNode = robotPath[robotPath.length - 1];
 
                 currentTargetNodeId = null;
                 document.getElementById('target-name').textContent = 'None';
@@ -1037,6 +1042,8 @@
                 if (dist > 1e-6) {
                     robotYaw = Math.atan2(-dx, -dz);
                 }
+                // Track which node we just arrived at
+                robotCurrentNode = robotPath[robotPathTargetIdx];
                 robotPathTargetIdx++;
             } else {
                 // Move toward the target node
@@ -1278,8 +1285,8 @@
                 return;
             }
 
-            // Normal mode: click a node to set it as robot target
-            if (clickedNodeId !== null) {
+            // Live mode: click a node to navigate robot there
+            if (liveMode && clickedNodeId !== null) {
                 setRobotTarget(clickedNodeId);
             }
             mouseDownPos = null;
@@ -1476,11 +1483,44 @@
         }
 
         function setRobotTarget(nodeId) {
+            if (!liveMode) return;
+
+            // If moving, find the nearest node to snap to before re-pathing
+            let fromNode = robotCurrentNode;
+            if (robotMoving && robotPath.length > 0) {
+                let bestDist = Infinity;
+                let bestNode = robotCurrentNode;
+                for (const nid of robotPath) {
+                    const n = graphNodes.find(nd => nd.id === nid);
+                    if (!n) continue;
+                    const dx = n.position[0] - robotPosition.x;
+                    const dy = n.position[1] - robotPosition.y;
+                    const dz = n.position[2] - robotPosition.z;
+                    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        bestNode = nid;
+                    }
+                }
+                fromNode = bestNode;
+                // Snap robot to that node so it doesn't cut diagonally
+                const snapNode = graphNodes.find(n => n.id === fromNode);
+                if (snapNode) {
+                    robotPosition.set(snapNode.position[0], snapNode.position[1], snapNode.position[2]);
+                }
+                robotCurrentNode = fromNode;
+                robotMoving = false;
+                clearPathHighlight();
+            }
+
             currentTargetNodeId = nodeId;
             document.getElementById('target-name').textContent = nodeId;
             updateNodeVisuals();
 
-            socket.emit('robot_command', { target: nodeId });
+            socket.emit('robot_command', {
+                target: nodeId,
+                from_node: fromNode
+            });
         }
 
         // ========================================================================
@@ -1507,6 +1547,7 @@
                             spawnNode.position[1],
                             spawnNode.position[2]
                         );
+                        robotCurrentNode = spawnNode.id;
                         updateRobotMarker();
                         updateRobotCamera();
                     }
@@ -1586,6 +1627,7 @@
         // Edit mode toggle
         const btnEditMode = document.getElementById('btn-edit-mode');
         btnEditMode.addEventListener('click', () => {
+            if (liveMode) return;  // can't edit while live
             editMode = !editMode;
             btnEditMode.classList.toggle('active', editMode);
 
@@ -1708,20 +1750,55 @@
             annotatedImage.style.display = 'block';
         });
 
-        // Start/Stop button
+        // Start/Stop button — toggles live mode
         const btnStartStop = document.getElementById('btn-start-stop');
         btnStartStop.addEventListener('click', () => {
-            isStreaming = !isStreaming;
-            if (isStreaming) {
+            liveMode = !liveMode;
+            isStreaming = liveMode;
+
+            if (liveMode) {
+                // Enter live mode: spawn robot at start node
                 btnStartStop.textContent = 'Stop';
                 btnStartStop.classList.add('stop');
-                btnStartStop.classList.remove('active');
+
+                // Exit edit mode if active
+                if (editMode) {
+                    editMode = false;
+                    btnEditMode.classList.remove('active');
+                    connectMode = false;
+                    document.getElementById('btn-add-edge').classList.remove('active');
+                }
+
+                // Snap robot to start node
+                const spawnNode = startNodeId
+                    ? graphNodes.find(n => n.id === startNodeId)
+                    : graphNodes[0];
+                if (spawnNode) {
+                    robotPosition.set(spawnNode.position[0], spawnNode.position[1], spawnNode.position[2]);
+                    robotCurrentNode = spawnNode.id;
+                    robotYaw = 0;
+                    robotMoving = false;
+                    clearPathHighlight();
+                    currentTargetNodeId = null;
+                    document.getElementById('target-name').textContent = 'None';
+                    updateRobotMarker();
+                    updateRobotCamera();
+                }
+
+                robotGroup.visible = true;
                 fpsResultCount = 0;
                 fpsLastReset = performance.now();
+                updateModeIndicator('Live: click a waypoint to navigate');
             } else {
+                // Exit live mode
                 btnStartStop.textContent = 'Start';
                 btnStartStop.classList.remove('stop');
-                btnStartStop.classList.remove('active');
+                robotMoving = false;
+                clearPathHighlight();
+                currentTargetNodeId = null;
+                document.getElementById('target-name').textContent = 'None';
+                updateNodeVisuals();
+                updateModeIndicator('Navigate: orbit view');
             }
         });
 
