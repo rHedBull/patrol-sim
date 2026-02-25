@@ -84,6 +84,14 @@ def get_graph():
     return jsonify(nav_graph.to_dict())
 
 
+@app.route("/api/graph", methods=["DELETE"])
+def clear_graph():
+    global nav_graph, robot
+    nav_graph = NavGraph()
+    robot = None
+    return jsonify({"ok": True})
+
+
 @app.route("/api/graph", methods=["PUT"])
 def put_graph():
     global nav_graph
@@ -99,6 +107,17 @@ def add_node():
     node_id = data["id"]
     position = tuple(data["position"])
     nav_graph.add_node(node_id, position)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/graph/node/<node_id>", methods=["PUT"])
+def update_node(node_id: str):
+    data = request.get_json(force=True)
+    try:
+        node = nav_graph.get_node(node_id)
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    nav_graph.add_node(node_id, tuple(data["position"]))
     return jsonify({"ok": True})
 
 
