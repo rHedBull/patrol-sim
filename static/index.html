@@ -1008,8 +1008,18 @@
             if (now - lastFrameTime < FRAME_INTERVAL_MS) return;
             lastFrameTime = now;
 
-            // Render robot camera view
-            robotRenderer.render(robotScene, robotCamera);
+            // Render robot camera with full mesh (walls visible) and robot hidden
+            robotGroup.visible = false;
+            if (wallsHidden && fullMesh && noWallsMesh) {
+                fullMesh.visible = true;
+                noWallsMesh.visible = false;
+                robotRenderer.render(robotScene, robotCamera);
+                fullMesh.visible = false;
+                noWallsMesh.visible = true;
+            } else {
+                robotRenderer.render(robotScene, robotCamera);
+            }
+            robotGroup.visible = true;
 
             // Capture as JPEG
             const dataUrl = robotRenderer.domElement.toDataURL('image/jpeg', 0.8);
