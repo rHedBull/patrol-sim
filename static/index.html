@@ -1045,6 +1045,19 @@
                 // Track which node we just arrived at
                 robotCurrentNode = robotPath[robotPathTargetIdx];
                 robotPathTargetIdx++;
+
+                // If there's a pending re-target, repath from this node
+                if (pendingTarget) {
+                    const newTarget = pendingTarget;
+                    pendingTarget = null;
+                    robotMoving = false;
+                    clearPathHighlight();
+                    socket.emit('robot_command', {
+                        target: newTarget,
+                        from_node: robotCurrentNode
+                    });
+                    return;
+                }
             } else {
                 // Move toward the target node
                 const frac = stepDist / dist;
@@ -1484,44 +1497,31 @@
             }
         }
 
+        // Queued target: requested while robot is mid-segment
+        let pendingTarget = null;
+
         function setRobotTarget(nodeId) {
             if (!liveMode) return;
 
-            // If moving, find the nearest node to snap to before re-pathing
-            let fromNode = robotCurrentNode;
-            if (robotMoving && robotPath.length > 0) {
-                let bestDist = Infinity;
-                let bestNode = robotCurrentNode;
-                for (const nid of robotPath) {
-                    const n = graphNodes.find(nd => nd.id === nid);
-                    if (!n) continue;
-                    const dx = n.position[0] - robotPosition.x;
-                    const dy = n.position[1] - robotPosition.y;
-                    const dz = n.position[2] - robotPosition.z;
-                    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                    if (d < bestDist) {
-                        bestDist = d;
-                        bestNode = nid;
-                    }
-                }
-                fromNode = bestNode;
-                // Snap robot to that node so it doesn't cut diagonally
-                const snapNode = graphNodes.find(n => n.id === fromNode);
-                if (snapNode) {
-                    robotPosition.set(snapNode.position[0], snapNode.position[1], snapNode.position[2]);
-                }
-                robotCurrentNode = fromNode;
-                robotMoving = false;
-                clearPathHighlight();
+            if (robotMoving && robotPath.length > 0 && robotPathTargetIdx < robotPath.length) {
+                // Robot is mid-segment — queue the target and let it finish
+                // the current edge first
+                pendingTarget = nodeId;
+                currentTargetNodeId = nodeId;
+                document.getElementById('target-name').textContent = nodeId;
+                updateNodeVisuals();
+                return;
             }
 
+            // Robot is idle at a node — request path immediately
+            pendingTarget = null;
             currentTargetNodeId = nodeId;
             document.getElementById('target-name').textContent = nodeId;
             updateNodeVisuals();
 
             socket.emit('robot_command', {
                 target: nodeId,
-                from_node: fromNode
+                from_node: robotCurrentNode
             });
         }
 
