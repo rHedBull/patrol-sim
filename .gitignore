@@ -3,6 +3,10 @@ __pycache__/
 .venv/
 *.pt
 .pytest_cache/
+.idea/
+.playwright-mcp/
+*.png
+meshes/
 
 # pi handoff files (temporary)
 HANDOFF-*.md
