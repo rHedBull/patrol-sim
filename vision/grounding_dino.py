@@ -22,6 +22,7 @@ class GroundingDINOProcessor(VisionProcessor):
     ):
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.use_amp = self.device == "cuda"
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(
             model_id
         ).to(self.device)
@@ -40,7 +41,9 @@ class GroundingDINOProcessor(VisionProcessor):
             images=image, text=self.text_prompt, return_tensors="pt"
         ).to(self.device)
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(
+            device_type=self.device, enabled=self.use_amp
+        ):
             outputs = self.model(**inputs)
 
         results = self.processor.post_process_grounded_object_detection(

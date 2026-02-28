@@ -654,12 +654,12 @@
 
                 meshBBox = box;
                 fullMesh = mesh;
-                fullMesh.visible = !wallsHidden;
+                fullMesh.visible = !wallsHidden;  // walls hidden by default in orbit view
 
-                // Load no-walls version
+                // Load no-walls version (equipment) — always visible
                 gltfLoader.load('/mesh_no_walls.glb', (gltf2) => {
                     noWallsMesh = gltf2.scene;
-                    noWallsMesh.visible = wallsHidden;
+                    noWallsMesh.visible = true;
                     orbitScene.add(noWallsMesh);
                     console.log('No-walls mesh loaded');
                 });
@@ -1096,18 +1096,13 @@
             if (now - lastFrameTime < FRAME_INTERVAL_MS) return;
             lastFrameTime = now;
 
-            // Render robot camera with full mesh (walls visible), robot and graph hidden
+            // Render robot camera with full scene (both meshes), robot and graph hidden
             robotGroup.visible = false;
             graphGroup.visible = false;
-            if (wallsHidden && fullMesh && noWallsMesh) {
-                fullMesh.visible = true;
-                noWallsMesh.visible = false;
-                robotRenderer.render(robotScene, robotCamera);
-                fullMesh.visible = false;
-                noWallsMesh.visible = true;
-            } else {
-                robotRenderer.render(robotScene, robotCamera);
-            }
+            const savedWallsVis = fullMesh ? fullMesh.visible : true;
+            if (fullMesh) fullMesh.visible = true;
+            robotRenderer.render(robotScene, robotCamera);
+            if (fullMesh) fullMesh.visible = savedWallsVis;
             graphGroup.visible = true;
             robotGroup.visible = true;
 
@@ -1713,13 +1708,12 @@
             }
         });
 
-        // Toggle walls: switch between full and no-walls mesh in orbit view
+        // Toggle walls: only affects structural mesh in orbit view; equipment always visible
         document.getElementById('btn-hide-walls').addEventListener('click', () => {
             wallsHidden = !wallsHidden;
             document.getElementById('btn-hide-walls').classList.toggle('active', wallsHidden);
-            if (!fullMesh || !noWallsMesh) return;
+            if (!fullMesh) return;
             fullMesh.visible = !wallsHidden;
-            noWallsMesh.visible = wallsHidden;
         });
 
         // Load graph dropdown
@@ -1931,19 +1925,14 @@
             // Render orbit view (shows no-walls mesh if toggled)
             orbitRenderer.render(orbitScene, orbitCamera);
 
-            // Render robot camera view — hide robot and graph so they don't appear in POV
+            // Render robot camera view — always show full scene, hide robot and graph
             if (!showYoloView || isStreaming) {
                 robotGroup.visible = false;
                 graphGroup.visible = false;
-                if (wallsHidden && fullMesh && noWallsMesh) {
-                    fullMesh.visible = true;
-                    noWallsMesh.visible = false;
-                    robotRenderer.render(robotScene, robotCamera);
-                    fullMesh.visible = false;
-                    noWallsMesh.visible = true;
-                } else {
-                    robotRenderer.render(robotScene, robotCamera);
-                }
+                const savedWallsVisible = fullMesh ? fullMesh.visible : true;
+                if (fullMesh) fullMesh.visible = true;
+                robotRenderer.render(robotScene, robotCamera);
+                if (fullMesh) fullMesh.visible = savedWallsVisible;
                 graphGroup.visible = true;
                 robotGroup.visible = liveMode && !editMode;
             }

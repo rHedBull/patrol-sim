@@ -3,3 +3,10 @@ __pycache__/
 .venv/
 *.pt
 .pytest_cache/
+
+# pi handoff files (temporary)
+HANDOFF-*.md
+
+# pi wip & ideas (personal, not committed by default)
+WIP.md
+IDEAS.md
