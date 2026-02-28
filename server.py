@@ -17,7 +17,7 @@ from flask_socketio import SocketIO, emit
 
 from navigation.graph import NavGraph
 from navigation.robot import Robot
-from vision.yolo import YOLOProcessor
+from vision.grounding_dino import GroundingDINOProcessor
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -40,7 +40,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 nav_graph = NavGraph()
 robot: Robot | None = None
-vision: YOLOProcessor | None = None
+vision: GroundingDINOProcessor | None = None
 
 
 def _reset_robot() -> None:
@@ -295,9 +295,14 @@ if __name__ == "__main__":
 
     GRAPHS_DIR.mkdir(exist_ok=True)
 
-    print("Loading YOLO model...")
-    vision = YOLOProcessor(model_name="yolov8n.pt", confidence=0.25)
-    print("YOLO model loaded.")
+    print("Loading Grounding DINO model...")
+    vision = GroundingDINOProcessor(
+        model_id="IDEA-Research/grounding-dino-tiny",
+        text_prompt="a person. a chair. a door. a table. a window.",
+        confidence=0.3,
+        text_threshold=0.25,
+    )
+    print("Grounding DINO model loaded.")
 
     print(f"Serving mesh from: {MESH_PATH}")
     print("Open http://localhost:5000 in your browser")
