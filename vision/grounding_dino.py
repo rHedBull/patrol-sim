@@ -16,7 +16,7 @@ class GroundingDINOProcessor(VisionProcessor):
     def __init__(
         self,
         model_id: str = "IDEA-Research/grounding-dino-tiny",
-        text_prompt: str = "a person. a chair. a door. a table. a window.",
+        text_prompt: str = "a pipe. a pump. a valve.",
         confidence: float = 0.3,
         text_threshold: float = 0.25,
     ):

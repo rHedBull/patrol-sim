@@ -298,7 +298,7 @@ if __name__ == "__main__":
     print("Loading Grounding DINO model...")
     vision = GroundingDINOProcessor(
         model_id="IDEA-Research/grounding-dino-tiny",
-        text_prompt="a person. a chair. a door. a table. a window.",
+        text_prompt="a pipe. a pump. a valve.",
         confidence=0.3,
         text_threshold=0.25,
     )
