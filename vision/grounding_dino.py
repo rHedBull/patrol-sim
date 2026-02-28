@@ -23,8 +23,9 @@ class GroundingDINOProcessor(VisionProcessor):
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.use_amp = self.device == "cuda"
+        dtype = torch.float16 if self.use_amp else torch.float32
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(
-            model_id
+            model_id, torch_dtype=dtype
         ).to(self.device)
         self.text_prompt = text_prompt
         self.confidence = confidence
