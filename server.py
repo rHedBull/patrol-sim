@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-import os
+import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -25,7 +25,8 @@ from vision.grounding_dino import GroundingDINOProcessor
 
 MESH_PATH: Path | None = None
 NO_WALLS_MESH_PATH: Path | None = None
-GRAPHS_DIR = Path(__file__).resolve().parent / "graphs"
+GRAPHS_ROOT = Path(__file__).resolve().parent / "graphs"
+GRAPHS_DIR: Path = GRAPHS_ROOT  # set per-mesh in __main__
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -185,6 +186,22 @@ def list_graphs():
     return jsonify(names)
 
 
+@app.route("/api/orientation", methods=["GET"])
+def get_orientation():
+    path = GRAPHS_DIR / "_orientation.json"
+    if path.exists():
+        return jsonify(json.loads(path.read_text()))
+    return jsonify(None)
+
+
+@app.route("/api/orientation", methods=["PUT"])
+def put_orientation():
+    data = request.get_json(force=True)
+    path = GRAPHS_DIR / "_orientation.json"
+    path.write_text(json.dumps(data))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/graph/delete/<name>", methods=["DELETE"])
 def delete_graph(name: str):
     global nav_graph, robot
@@ -224,13 +241,15 @@ def get_robot():
 @socketio.on("frame")
 def handle_frame(data):
     """Receive a base64 JPEG frame, run YOLO, return detections."""
-    if vision is None:
-        emit("result", {"error": "Vision processor not loaded"})
-        return
-
     image_data = data["image"]
     if "," in image_data:
         image_data = image_data.split(",", 1)[1]
+
+    if vision is None:
+        # Passthrough: echo the raw frame back with no detections.
+        emit("result", {"detections": [], "annotated_frame": f"data:image/jpeg;base64,{image_data}"})
+        return
+
     raw = base64.b64decode(image_data)
     img = Image.open(io.BytesIO(raw)).convert("RGB")
     frame = np.array(img)
@@ -293,16 +312,20 @@ if __name__ == "__main__":
             print(f"No-walls mesh not found: {NO_WALLS_MESH_PATH}", file=sys.stderr)
             NO_WALLS_MESH_PATH = None
 
-    GRAPHS_DIR.mkdir(exist_ok=True)
+    # Namespace graphs per mesh so each scene has its own collection.
+    # If the file stem is generic (e.g. "mesh"), fall back to the parent dir name.
+    scene_name = MESH_PATH.stem
+    if scene_name in {"mesh", "scene"} and MESH_PATH.parent.name == "source":
+        scene_name = MESH_PATH.parent.parent.name
+    elif scene_name in {"mesh", "scene"}:
+        scene_name = MESH_PATH.parent.name
+    GRAPHS_DIR = GRAPHS_ROOT / scene_name
+    GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Graphs dir: {GRAPHS_DIR}")
 
-    print("Loading Grounding DINO model...")
-    vision = GroundingDINOProcessor(
-        model_id="IDEA-Research/grounding-dino-tiny",
-        text_prompt="a pipe. a pump. a valve.",
-        confidence=0.3,
-        text_threshold=0.25,
-    )
-    print("Grounding DINO model loaded.")
+    # Vision disabled — frames will be passed through without detection.
+    vision = None
+    print("Vision processor disabled.")
 
     print(f"Serving mesh from: {MESH_PATH}")
     print("Open http://localhost:5000 in your browser")

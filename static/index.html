@@ -365,6 +365,7 @@
                 <button id="btn-save-graph" title="Save current graph">Save Graph</button>
                 <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
                 <button id="btn-hide-walls" class="active" title="Clip near-side geometry">Hide Walls</button>
+                <button id="btn-orient" title="Cycle scene orientation (saved per scene)">Orient ↻</button>
                 <select id="graph-select" title="Load a saved graph">
                     <option value="">-- Load Graph --</option>
                 </select>
@@ -542,6 +543,8 @@
         orbitRenderer.setSize(orbitContainer.clientWidth, orbitContainer.clientHeight);
         orbitRenderer.setPixelRatio(window.devicePixelRatio);
         orbitRenderer.shadowMap.enabled = true;
+        orbitRenderer.toneMapping = THREE.NoToneMapping;
+        orbitRenderer.toneMappingExposure = 1.5;
         orbitContainer.appendChild(orbitRenderer.domElement);
 
         // Wall toggle: switch between full mesh and no-walls mesh
@@ -556,13 +559,24 @@
         orbitControls.target.set(0, 0, 0);
 
         // Lighting for orbit scene
-        const orbitAmbient = new THREE.AmbientLight(0xffffff, 0.5);
+        const orbitAmbient = new THREE.AmbientLight(0xffffff, 4.5);
         orbitScene.add(orbitAmbient);
 
-        const orbitDirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const orbitHemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 2.0);
+        orbitScene.add(orbitHemi);
+
+        const orbitDirLight = new THREE.DirectionalLight(0xffffff, 2.0);
         orbitDirLight.position.set(10, 20, 10);
         orbitDirLight.castShadow = true;
         orbitScene.add(orbitDirLight);
+
+        const orbitDirLight2 = new THREE.DirectionalLight(0xffffff, 1.2);
+        orbitDirLight2.position.set(-10, 10, -10);
+        orbitScene.add(orbitDirLight2);
+
+        const orbitDirLight3 = new THREE.DirectionalLight(0xffffff, 1.0);
+        orbitDirLight3.position.set(0, -10, 0);
+        orbitScene.add(orbitDirLight3);
 
         // Grid helper for reference
         const gridHelper = new THREE.GridHelper(50, 50, 0x333333, 0x222222);
@@ -637,51 +651,124 @@
         const gltfLoader = new GLTFLoader();
         const loadingOverlay = document.getElementById('loading-overlay');
 
+        // Orientation presets: 6 axis-aligned "up" directions.
+        // Each entry is an Euler rotation (XYZ order) applied to the mesh.
+        const ORIENTATION_PRESETS = [
+            { name: 'Y+', rot: [0, 0, 0] },
+            { name: 'Z+', rot: [-Math.PI / 2, 0, 0] },
+            { name: 'X+', rot: [0, 0, Math.PI / 2] },
+            { name: 'Y-', rot: [Math.PI, 0, 0] },
+            { name: 'Z-', rot: [Math.PI / 2, 0, 0] },
+            { name: 'X-', rot: [0, 0, -Math.PI / 2] },
+        ];
+        let orientationIndex = 0;
+
+        function autoDetectOrientationIndex(mesh) {
+            // Save then clear rotation to measure raw bbox.
+            const prev = mesh.rotation.clone();
+            mesh.rotation.set(0, 0, 0);
+            mesh.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(mesh);
+            const s = box.getSize(new THREE.Vector3());
+            mesh.rotation.copy(prev);
+            mesh.updateMatrixWorld(true);
+            if (s.z < s.x && s.z < s.y) return 1; // Z+ up
+            if (s.x < s.y && s.x < s.z) return 2; // X+ up
+            return 0;                              // Y+ up (default)
+        }
+
+        function applyOrientation(idx) {
+            if (!fullMesh) return;
+            const r = ORIENTATION_PRESETS[idx].rot;
+            fullMesh.rotation.set(r[0], r[1], r[2]);
+            fullMesh.updateMatrixWorld(true);
+            if (noWallsMesh) {
+                noWallsMesh.rotation.set(r[0], r[1], r[2]);
+                noWallsMesh.updateMatrixWorld(true);
+            }
+
+            const box = new THREE.Box3().setFromObject(fullMesh);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+
+            meshBBox = box;
+            window._debugBBox = {min:{x:box.min.x,y:box.min.y,z:box.min.z}, max:{x:box.max.x,y:box.max.y,z:box.max.z}, size:{x:size.x,y:size.y,z:size.z}};
+
+            orbitControls.target.copy(center);
+            orbitCamera.position.set(
+                center.x + size.x * 0.8,
+                center.y + size.y * 1.5,
+                center.z + size.z * 0.8
+            );
+            orbitControls.update();
+
+            floorPlane.position.set(center.x, box.min.y, center.z);
+            gridHelper.position.y = box.min.y;
+
+            robotPosition.set(center.x, box.min.y + 0.01, center.z);
+            robotGroup.position.copy(robotPosition);
+            updateRobotCamera();
+
+            const btn = document.getElementById('btn-orient');
+            if (btn) btn.textContent = 'Orient ' + ORIENTATION_PRESETS[idx].name;
+        }
+
+        async function persistOrientation(idx) {
+            try {
+                await fetch('/api/orientation', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ index: idx }),
+                });
+            } catch (e) { console.warn('Could not persist orientation:', e); }
+        }
+
         gltfLoader.load(
             '/mesh.glb',
-            (gltf) => {
+            async (gltf) => {
                 const mesh = gltf.scene;
+                mesh.traverse((obj) => {
+                    if (obj.isMesh && obj.material) {
+                        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                        for (const m of mats) {
+                            if (obj.geometry?.attributes?.color) m.vertexColors = true;
+                            m.side = THREE.DoubleSide;
+                            m.needsUpdate = true;
+                        }
+                    }
+                });
+
                 orbitScene.add(mesh);
                 collisionMesh = mesh;
-
-                // Center orbit camera on the mesh
-                const box = new THREE.Box3().setFromObject(mesh);
-                const center = box.getCenter(new THREE.Vector3());
-                const size = box.getSize(new THREE.Vector3());
-
-                window._debugMesh = mesh;
-                window._debugBBox = {min: {x: box.min.x, y: box.min.y, z: box.min.z}, max: {x: box.max.x, y: box.max.y, z: box.max.z}, size: {x: size.x, y: size.y, z: size.z}};
-
-                meshBBox = box;
                 fullMesh = mesh;
-                fullMesh.visible = !wallsHidden;  // walls hidden by default in orbit view
+                window._debugMesh = mesh;
+
+                // Pick orientation: saved override → auto-detect.
+                let savedIdx = null;
+                try {
+                    const r = await fetch('/api/orientation');
+                    const data = await r.json();
+                    if (data && Number.isInteger(data.index)) savedIdx = data.index;
+                } catch (e) {}
+                orientationIndex = savedIdx !== null ? savedIdx : autoDetectOrientationIndex(mesh);
+
+                fullMesh.visible = !wallsHidden;
 
                 // Load no-walls version (equipment) — always visible
                 gltfLoader.load('/mesh_no_walls.glb', (gltf2) => {
                     noWallsMesh = gltf2.scene;
                     noWallsMesh.visible = true;
                     orbitScene.add(noWallsMesh);
+                    applyOrientation(orientationIndex);
                     console.log('No-walls mesh loaded');
+                }, undefined, () => {
+                    // No no-walls mesh supplied — show full mesh in orbit view
+                    wallsHidden = false;
+                    fullMesh.visible = true;
+                    document.getElementById('btn-hide-walls')?.classList.remove('active');
                 });
 
-                orbitControls.target.copy(center);
-                orbitCamera.position.set(
-                    center.x + size.x * 0.8,
-                    center.y + size.y * 1.5,
-                    center.z + size.z * 0.8
-                );
-                orbitControls.update();
-
-                // Position floor plane at mesh bottom
-                floorPlane.position.y = box.min.y;
-                floorPlane.position.x = center.x;
-                floorPlane.position.z = center.z;
-                gridHelper.position.y = box.min.y;
-
-                // Place robot at center of mesh
-                robotPosition.set(center.x, box.min.y + 0.01, center.z);
-                robotGroup.position.copy(robotPosition);
-                updateRobotCamera();
+                applyOrientation(orientationIndex);
 
                 loadingOverlay.classList.add('hidden');
 
@@ -692,7 +779,6 @@
                     if (hasDefault) {
                         loadGraph('default');
                     }
-                    // If no saved graphs, start with empty scene
                 });
             },
             (progress) => {
@@ -1706,6 +1792,13 @@
             } catch (e) {
                 console.error('Failed to delete graph:', e);
             }
+        });
+
+        // Cycle scene orientation; persist per-scene.
+        document.getElementById('btn-orient').addEventListener('click', () => {
+            orientationIndex = (orientationIndex + 1) % ORIENTATION_PRESETS.length;
+            applyOrientation(orientationIndex);
+            persistOrientation(orientationIndex);
         });
 
         // Toggle walls: only affects structural mesh in orbit view; equipment always visible
