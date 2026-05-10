@@ -267,6 +267,24 @@
             opacity: 0.4;
             cursor: not-allowed;
         }
+        #plan-controls .render-sep {
+            width: 1px; height: 18px; background: #333; margin: 0 4px;
+        }
+        #plan-controls label.rl {
+            font-size: 11px; color: #aaa; display: inline-flex;
+            align-items: center; gap: 4px;
+        }
+        #plan-controls input[type=text],
+        #plan-controls input[type=number],
+        #plan-controls select {
+            background: rgba(255,255,255,0.06); border: 1px solid #333;
+            color: #ddd; padding: 2px 4px; border-radius: 3px;
+            font-family: monospace; font-size: 11px;
+        }
+        #render-progress {
+            font-size: 11px; color: #ffb74d; font-family: monospace;
+            min-width: 120px;
+        }
 
         #target-display {
             font-size: 12px;
@@ -465,6 +483,18 @@
         <div id="plan-controls" hidden>
             <span id="plan-waypoints" title="Waypoints in order"></span>
             <button id="btn-plan-clear" disabled>Clear</button>
+            <span class="render-sep"></span>
+            <label class="rl">name <input type="text" id="render-name" value="route01" size="10"></label>
+            <label class="rl">step <input type="number" id="render-spacing" value="1.0" min="0.1" step="0.1" style="width:48px"> m</label>
+            <label class="rl">quality
+                <select id="render-quality">
+                    <option value="standard">standard</option>
+                    <option value="high" selected>high</option>
+                    <option value="ultra">ultra</option>
+                </select>
+            </label>
+            <button id="btn-plan-render" disabled title="Render PNGs along the path">Render</button>
+            <span id="render-progress"></span>
         </div>
         <div class="control-group">
             <label>Speed</label>
@@ -1310,6 +1340,21 @@
             });
         }
 
+        // Pending capture promises keyed by id.
+        const _pendingCaptures = new Map();
+        function captureFromPotree({ maxMs = 8000, stableFrames = 8, parentTimeoutMs = 20000 } = {}) {
+            return new Promise((resolve, reject) => {
+                if (!potreeReady) return reject(new Error('Potree not ready'));
+                const id = 'cap_' + Math.random().toString(36).slice(2, 9);
+                const timer = setTimeout(() => {
+                    _pendingCaptures.delete(id);
+                    reject(new Error('capture timeout'));
+                }, parentTimeoutMs);
+                _pendingCaptures.set(id, { resolve, reject, timer });
+                postToPotree({ type: 'capture', id, maxMs, stableFrames });
+            });
+        }
+
         window.addEventListener('message', (ev) => {
             if (ev.source !== potreeFrame.contentWindow) return;
             const msg = ev.data;
@@ -1321,6 +1366,14 @@
                 sendPotreePose();
             } else if (msg.type === 'pointcloud_error') {
                 console.warn('Potree pointcloud error:', msg.error, msg.url);
+            } else if (msg.type === 'capture_result') {
+                const pending = _pendingCaptures.get(msg.id);
+                if (pending) {
+                    clearTimeout(pending.timer);
+                    _pendingCaptures.delete(msg.id);
+                    if (msg.error) pending.reject(new Error(msg.error));
+                    else pending.resolve({ dataUrl: msg.dataUrl, stats: msg.stats });
+                }
             }
         });
 
@@ -1850,6 +1903,178 @@
         function refreshPlanUI() {
             renderPlanWaypoints();
             updateNodeVisuals();
+            const renderBtn = document.getElementById('btn-plan-render');
+            if (renderBtn) renderBtn.disabled = planActive || planWaypoints.length < 1;
+        }
+
+        // ── Arc-length sampling along a polyline ───────────────────────────
+        function arcLengthSample(positions, spacing) {
+            if (positions.length < 2) return [];
+            // Compute cumulative arc length
+            const cum = [0];
+            for (let i = 1; i < positions.length; i++) {
+                const dx = positions[i].x - positions[i-1].x;
+                const dy = positions[i].y - positions[i-1].y;
+                const dz = positions[i].z - positions[i-1].z;
+                cum.push(cum[i-1] + Math.sqrt(dx*dx + dy*dy + dz*dz));
+            }
+            const total = cum[cum.length - 1];
+            if (total < 1e-6) return [];
+
+            const samples = [];
+            let seg = 0;
+            const nSteps = Math.max(1, Math.floor(total / spacing));
+            for (let k = 0; k <= nSteps; k++) {
+                const s = Math.min(k * spacing, total);
+                while (seg < cum.length - 2 && cum[seg+1] < s) seg++;
+                const segLen = cum[seg+1] - cum[seg];
+                const t = segLen > 1e-9 ? (s - cum[seg]) / segLen : 0;
+                const a = positions[seg], b = positions[seg+1];
+                const pos = {
+                    x: a.x + (b.x - a.x) * t,
+                    y: a.y + (b.y - a.y) * t,
+                    z: a.z + (b.z - a.z) * t,
+                };
+                const dx = b.x - a.x, dz = b.z - a.z;
+                const yaw = Math.atan2(-dx, -dz);
+                samples.push({ pos, yaw, arcLen: s });
+            }
+            return samples;
+        }
+
+        // Potree's HQSplatRenderer pre-allocates fixed-size GPU buffers at
+        // boot; pushing pointBudget beyond ~12M crashes it ("offset is out
+        // of bounds" inside renderOctree). The real quality dial for static
+        // captures is therefore stableFrames + maxMs — letting the LOD
+        // stream finish at a moderate budget — rather than raising the cap.
+        const QUALITY_PRESETS = {
+            standard: { pointBudget: 3_000_000,  minSize: 2, maxMs: 3000,  stableFrames: 5 },
+            high:     { pointBudget: 8_000_000,  minSize: 2, maxMs: 10000, stableFrames: 10 },
+            ultra:    { pointBudget: 12_000_000, minSize: 1, maxMs: 25000, stableFrames: 20 },
+        };
+
+        async function renderPlanFrames() {
+            if (planActive) return;
+            const name = (document.getElementById('render-name').value || '').trim();
+            const spacing = parseFloat(document.getElementById('render-spacing').value);
+            const quality = document.getElementById('render-quality').value;
+            const progress = document.getElementById('render-progress');
+
+            if (!name) { alert('Pick a render name'); return; }
+            if (!(spacing > 0)) { alert('Spacing must be > 0'); return; }
+            if (planWaypoints.length < 1) { alert('Add waypoints first'); return; }
+            if (!potreeReady) { alert('Potree not ready yet'); return; }
+
+            // Build the chained path from server (always include current robot
+            // node as the leg origin so the route starts where the robot is).
+            const wpFull = [robotCurrentNode, ...planWaypoints].filter(Boolean);
+            const wp = [];
+            for (const n of wpFull) if (wp.length === 0 || wp[wp.length-1] !== n) wp.push(n);
+            if (wp.length < 2) { alert('Plan needs ≥1 waypoint distinct from current node'); return; }
+
+            const resp = await fetch('/api/plan/path', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ waypoints: wp }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                alert('Path failed: ' + (err.error || resp.status));
+                return;
+            }
+            const { path } = await resp.json();
+            const positions = path.map(n => ({ x: n.position[0], y: n.position[1], z: n.position[2] }));
+            const samples = arcLengthSample(positions, spacing);
+            if (samples.length === 0) { alert('Path too short'); return; }
+
+            // Boost Potree quality, remember previous so we can restore.
+            const preset = QUALITY_PRESETS[quality] || QUALITY_PRESETS.high;
+            postToPotree({ type: 'quality', pointBudget: preset.pointBudget, minSize: preset.minSize });
+            // Brief settle after quality bump.
+            await new Promise(r => setTimeout(r, 500));
+
+            // Per-run directory: <name>__<quality>__<YYYYMMDD-HHMMSS>
+            const ts = (() => {
+                const d = new Date();
+                const p = (n) => String(n).padStart(2, '0');
+                return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-` +
+                       `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+            })();
+            const runName = `${name}__${quality}__${ts}`;
+
+            planActive = true;
+            robotMoving = false;
+            refreshPlanUI();
+            const t0 = performance.now();
+            try {
+                for (let i = 0; i < samples.length; i++) {
+                    const s = samples[i];
+                    // Drive parent's robot pose so existing sendPotreePose forwards it.
+                    robotPosition.set(s.pos.x, s.pos.y, s.pos.z);
+                    robotYaw = s.yaw;
+                    robotPitch = 0;
+                    updateRobotMarker();
+                    updateRobotCamera();
+
+                    // The iframe waits for Potree's LOD stream to settle
+                    // before reading the canvas; we just give it a small
+                    // head-start so it sees the new visible-node set.
+                    await new Promise(r => setTimeout(r, 80));
+
+                    let dataUrl, captureStats = null;
+                    try {
+                        const cap = await captureFromPotree({
+                            maxMs: preset.maxMs,
+                            stableFrames: preset.stableFrames,
+                            parentTimeoutMs: preset.maxMs + 8000,
+                        });
+                        dataUrl = cap.dataUrl;
+                        captureStats = cap.stats || null;
+                    } catch (e) {
+                        console.error('capture failed at sample', i, e);
+                        progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
+                        continue;
+                    }
+
+                    const pose = {
+                        position: [s.pos.x, s.pos.y, s.pos.z],
+                        yaw: s.yaw,
+                        arc_length: s.arcLen,
+                        quality,
+                    };
+                    const r = await fetch('/api/render_frame', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ name: runName, index: i, png_b64: dataUrl, pose }),
+                    });
+                    if (!r.ok) {
+                        const err = await r.json().catch(() => ({}));
+                        progress.textContent = `frame ${i+1}: save failed (${err.error || r.status})`;
+                        break;
+                    }
+                    const t = captureStats
+                        ? `${captureStats.elapsedMs}ms ${(captureStats.lru/1e6).toFixed(1)}M pts`
+                        : '';
+                    progress.textContent = `frame ${i+1}/${samples.length}  s=${s.arcLen.toFixed(1)}m  ${t}`;
+                }
+                const dt = ((performance.now() - t0) / 1000).toFixed(1);
+                progress.textContent = `done: ${samples.length} frames in ${dt}s → renders/${runName}/`;
+            } finally {
+                planActive = false;
+                refreshPlanUI();
+                // Restore default quality (matches potree-view.html boot).
+                postToPotree({ type: 'quality', pointBudget: 8_000_000, minSize: 2 });
+                // The render started from `robotCurrentNode` and walked the
+                // chain; restore the marker to that origin so the live view
+                // doesn't appear to have teleported.
+                const origin = graphNodes.find(n => n.id === robotCurrentNode);
+                if (origin) {
+                    robotPosition.set(origin.position[0], origin.position[1], origin.position[2]);
+                    robotYaw = 0;
+                    updateRobotMarker();
+                    updateRobotCamera();
+                }
+            }
         }
 
         function addPlanWaypoint(nodeId) {
@@ -2258,6 +2483,7 @@
         btnModeInteractive.addEventListener('click', () => setRouteMode('interactive'));
         btnModePlan.addEventListener('click', () => setRouteMode('plan'));
         document.getElementById('btn-plan-clear').addEventListener('click', clearPlan);
+        document.getElementById('btn-plan-render').addEventListener('click', renderPlanFrames);
 
         // Speed slider
         const speedSlider = document.getElementById('speed-slider');

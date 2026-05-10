@@ -27,6 +27,8 @@ MESH_PATH: Path | None = None
 NO_WALLS_MESH_PATH: Path | None = None
 GRAPHS_ROOT = Path(__file__).resolve().parent / "graphs"
 GRAPHS_DIR: Path = GRAPHS_ROOT  # set per-mesh in __main__
+RENDERS_ROOT = Path(__file__).resolve().parent / "renders"
+RENDERS_DIR: Path = RENDERS_ROOT  # set per-scene in __main__
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -239,6 +241,77 @@ def put_orientation():
     return jsonify({"ok": True})
 
 
+@app.route("/api/plan/path", methods=["POST"])
+def plan_path():
+    """Resolve a list of waypoints into the full chained A* polyline.
+
+    Returns ``{path: [{id, position:[x,y,z]}, ...]}`` with consecutive legs
+    glued (the shared join node is not duplicated). Used by the headless and
+    interactive renderers to compute arc-length samples without driving the
+    robot.
+    """
+    data = request.get_json(force=True)
+    waypoints = data.get("waypoints") or []
+    if len(waypoints) < 2:
+        return jsonify({"error": "Need at least 2 waypoints"}), 400
+
+    full: list[str] = []
+    for a, b in zip(waypoints, waypoints[1:]):
+        leg = nav_graph.find_path(a, b)
+        if leg is None:
+            return jsonify({"error": f"No path from '{a}' to '{b}'"}), 400
+        if full and full[-1] == leg[0]:
+            full.extend(leg[1:])
+        else:
+            full.extend(leg)
+
+    nodes = nav_graph.nodes
+    return jsonify({"path": [{"id": nid, "position": nodes[nid]} for nid in full]})
+
+
+@app.route("/api/render_frame", methods=["POST"])
+def save_render_frame():
+    """Persist a single rendered frame coming from the in-page renderer.
+
+    Body: ``{name, index, png_b64, pose}``. Writes
+    ``renders/<scene>/<name>/frame_NNNN.png`` and appends to
+    ``manifest.json`` in the same directory.
+    """
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if not name or "/" in name or ".." in name:
+        return jsonify({"error": "Invalid render name"}), 400
+    index = int(data.get("index", 0))
+    png_b64 = data.get("png_b64") or ""
+    if "," in png_b64:
+        png_b64 = png_b64.split(",", 1)[1]
+    if not png_b64:
+        return jsonify({"error": "Missing png_b64"}), 400
+
+    out_dir = RENDERS_DIR / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    frame_path = out_dir / f"frame_{index:04d}.png"
+    frame_path.write_bytes(base64.b64decode(png_b64))
+
+    manifest_path = out_dir / "manifest.json"
+    manifest = {"name": name, "scene": RENDERS_DIR.name, "frames": []}
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except Exception:
+            pass
+    pose = data.get("pose") or {}
+    entry = {"index": index, "file": frame_path.name, **pose}
+    # Replace by index if it already exists
+    manifest["frames"] = [f for f in manifest.get("frames", []) if f.get("index") != index]
+    manifest["frames"].append(entry)
+    manifest["frames"].sort(key=lambda f: f["index"])
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    return jsonify({"ok": True, "path": str(frame_path)})
+
+
 @app.route("/api/graph/delete/<name>", methods=["DELETE"])
 def delete_graph(name: str):
     global nav_graph, robot
@@ -425,7 +498,10 @@ if __name__ == "__main__":
         scene_name = raw_mesh_path.parent.name
     GRAPHS_DIR = GRAPHS_ROOT / scene_name
     GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
+    RENDERS_DIR = RENDERS_ROOT / scene_name
+    RENDERS_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Graphs dir: {GRAPHS_DIR}")
+    print(f"Renders dir: {RENDERS_DIR}")
 
     # Vision disabled — frames will be passed through without detection.
     vision = None

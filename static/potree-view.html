@@ -88,6 +88,21 @@
             statusHint.textContent = hint || '';
         }
 
+        // ── Force preserveDrawingBuffer on every WebGL context ─────────────
+        // Potree creates its WebGLRenderer internally, so we can't pass
+        // {preserveDrawingBuffer: true} directly. Patching getContext is the
+        // simplest way to ensure toDataURL() returns a valid PNG after a
+        // render (otherwise the buffer is undefined post-compositing).
+        (function patchGetContextForCapture() {
+            const orig = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+                if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+                    attrs = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+                }
+                return orig.call(this, type, attrs);
+            };
+        })();
+
         // ── Boot Potree ─────────────────────────────────────────────────────
         const viewer = new Potree.Viewer(document.getElementById('potree_render_area'));
         viewer.setEDLEnabled(false);            // Eye-Dome Lighting: muddies HQ splats; can re-enable via 'edl' postMessage.
@@ -251,6 +266,67 @@
                 if (typeof msg.on === 'boolean') viewer.setEDLEnabled(msg.on);
                 if (typeof msg.radius === 'number') viewer.setEDLRadius(msg.radius);
                 if (typeof msg.strength === 'number') viewer.setEDLStrength(msg.strength);
+            } else if (msg.type === 'capture') {
+                // Wait until Potree's octree LOD stream has settled before
+                // grabbing the canvas, otherwise we capture mid-load (the
+                // 1–3 s "blurry → sharp" effect you see when moving the
+                // camera live). We poll the LRU cache size and the global
+                // download queue; both go quiet when nothing more is
+                // coming in for the current viewpoint.
+                const id = msg.id;
+                const maxMs = (typeof msg.maxMs === 'number') ? msg.maxMs : 8000;
+                const stableNeeded = (typeof msg.stableFrames === 'number') ? msg.stableFrames : 8;
+
+                const visiblePoints = () => {
+                    if (!currentPointcloud) return 0;
+                    let n = 0;
+                    for (const node of currentPointcloud.visibleNodes || []) {
+                        n += node.getNumPoints ? node.getNumPoints() : (node.numPoints || 0);
+                    }
+                    return n;
+                };
+                const pendingLoads = () => (
+                    (Potree.numNodesLoading || 0) +
+                    (Potree.maxNodesLoading ? 0 : 0)
+                );
+                const lruSize = () => (Potree.lru && Potree.lru.numPoints) || 0;
+
+                let lastVis = -1, lastLru = -1, stable = 0;
+                const start = performance.now();
+
+                function tick() {
+                    const vis = visiblePoints();
+                    const lru = lruSize();
+                    const pending = pendingLoads();
+
+                    if (vis === lastVis && lru === lastLru && pending === 0 && vis > 0) {
+                        stable++;
+                    } else {
+                        stable = 0;
+                        lastVis = vis;
+                        lastLru = lru;
+                    }
+
+                    const elapsed = performance.now() - start;
+                    if (stable >= stableNeeded || elapsed > maxMs) {
+                        // One more rAF to ensure the latest update flushed.
+                        requestAnimationFrame(() => {
+                            let dataUrl = null, error = null;
+                            try {
+                                dataUrl = viewer.renderer.domElement.toDataURL('image/png');
+                            } catch (e) {
+                                error = String(e);
+                            }
+                            parent.postMessage({
+                                type: 'capture_result', id, dataUrl, error,
+                                stats: { visible: vis, lru, elapsedMs: Math.round(elapsed) },
+                            }, '*');
+                        });
+                        return;
+                    }
+                    requestAnimationFrame(tick);
+                }
+                requestAnimationFrame(tick);
             } else if (msg.type === 'quality' && currentPointcloud) {
                 const m = currentPointcloud.material;
                 if (typeof msg.pointBudget === 'number') viewer.setPointBudget(msg.pointBudget);
