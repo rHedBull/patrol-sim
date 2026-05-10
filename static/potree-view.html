@@ -98,14 +98,13 @@
         viewer.setBackground('black');
         viewer.useHQ = true;                    // High-Quality Splatting (paraboloid splats + EDL).
 
-        // The scenePointCloud group is rotated -π/2 around X so the cloud
-        // (UTM Z-up) renders Y-up to match the parent's Three.js frame. But
-        // Potree initialises the camera with Z-up (`up=(0,0,1)`), so without
-        // this override `view.lookAt` produces a rolled image — content is
-        // correctly placed but the horizon is rotated 90°. Force Y-up on the
-        // camera and on Potree's View so lookAt resolves orientation cleanly.
-        viewer.scene.cameraP.up.set(0, 1, 0);
-        if (viewer.scene.cameraO) viewer.scene.cameraO.up.set(0, 1, 0);
+        // Coordinate convention: we stay entirely in the cloud's native frame
+        // (UTM Z-up). The parent operates in Y-up Three.js with a per-scene
+        // orientation rotation applied to its mesh; we apply the inverse of
+        // that rotation to incoming poses (see applyInvOrient below) so by
+        // the time view.lookAt sees them, they're in cloud-native Z-up. This
+        // dodges the camera-roll bug caused by trying to render a Y-up scene
+        // through Potree's Z-up yaw/pitch View math.
 
         // We drive the camera externally — but Potree's HQ splat renderer
         // dereferences `viewer.controls.sceneControls`, so we must leave the
@@ -163,16 +162,13 @@
                 m.activeAttributeName = 'rgba';
                 viewer.scene.addPointCloud(currentPointcloud);
 
-                // Axis convention: Potree loads UTM data Z-up (X=easting,
-                // Y=northing, Z=height). Parent app is Three.js Y-up
-                // (X=easting, Y=height, Z=-northing). Both sides keep raw
-                // UTM (the mesh is NOT recentered to origin — verified at
-                // runtime: parent's robotPosition is in the same UTM frame
-                // as the cloud's). So the rotation alone aligns up-axes;
-                // no translation is needed and adding one moves the cloud
-                // away from the camera.
-                viewer.scene.scenePointCloud.rotation.x = -Math.PI / 2;
-                viewer.scene.scenePointCloud.updateMatrixWorld(true);
+                // Leave the scenePointCloud group untransformed: keep the
+                // cloud in its native UTM Z-up frame. Pose messages from the
+                // parent are inverse-rotated by applyInvOrient() so they
+                // arrive here in Z-up too — keeping ALL of Potree's internal
+                // math (camera up, View yaw/pitch, EDL projection) in one
+                // consistent convention. Rotating the scene instead would
+                // contradict Potree's hard-coded Z-up View update().
 
                 setStatus(null);
 
@@ -189,6 +185,38 @@
             });
         }
 
+        // ── Inverse-orientation transform ──────────────────────────────────
+        // The parent applies one of 6 axis-aligned Euler rotations to its
+        // mesh (ORIENTATION_PRESETS in index.html) so the scene stands
+        // upright in its Y-up world. To put incoming poses back into the
+        // cloud's native UTM Z-up frame, we apply the inverse rotation.
+        //
+        // Three.js Euler default order is 'XYZ' meaning v_world = Rz·Ry·Rx·v.
+        // Each preset sets exactly one of rx/ry/rz to ±π/2 or π, so we just
+        // dispatch on which axis is non-zero. (A general Euler-inverse would
+        // need a Matrix3, which we can't construct without a global THREE.)
+        function applyInvOrient(v, eul) {
+            if (!eul) return v;
+            const [rx, ry, rz] = eul;
+            const [x, y, z] = v;
+            // Rx(θ): (x, y·c - z·s, y·s + z·c). Inverse uses θ' = -θ.
+            if (rx !== 0) {
+                const c = Math.cos(-rx), s = Math.sin(-rx);
+                return [x, y * c - z * s, y * s + z * c];
+            }
+            // Ry(θ): (x·c + z·s, y, -x·s + z·c). Inverse uses θ' = -θ.
+            if (ry !== 0) {
+                const c = Math.cos(-ry), s = Math.sin(-ry);
+                return [x * c + z * s, y, -x * s + z * c];
+            }
+            // Rz(θ): (x·c - y·s, x·s + y·c, z). Inverse uses θ' = -θ.
+            if (rz !== 0) {
+                const c = Math.cos(-rz), s = Math.sin(-rz);
+                return [x * c - y * s, x * s + y * c, z];
+            }
+            return v;  // identity preset (Y+)
+        }
+
         // ── postMessage protocol ────────────────────────────────────────────
         window.addEventListener('message', (ev) => {
             const msg = ev.data;
@@ -200,11 +228,14 @@
                 lastPose = msg;
                 if (!acceptParentPose) return;
                 const view = viewer.scene.view;
-                if (msg.position) view.position.set(msg.position[0], msg.position[1], msg.position[2]);
-                if (msg.target)   view.lookAt(msg.target[0], msg.target[1], msg.target[2]);
-                // Re-assert Y-up after every lookAt; Potree's View can mutate
-                // the camera up via its yaw/pitch math otherwise.
-                viewer.scene.cameraP.up.set(0, 1, 0);
+                if (msg.position) {
+                    const p = applyInvOrient(msg.position, msg.orientationEuler);
+                    view.position.set(p[0], p[1], p[2]);
+                }
+                if (msg.target) {
+                    const t = applyInvOrient(msg.target, msg.orientationEuler);
+                    view.lookAt(t[0], t[1], t[2]);
+                }
                 if (typeof msg.fov === 'number') viewer.setFOV(msg.fov);
                 if (typeof msg.near === 'number') viewer.scene.cameraP.near = msg.near;
                 if (typeof msg.far === 'number')  viewer.scene.cameraP.far  = msg.far;
