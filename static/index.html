@@ -359,11 +359,13 @@
             <div id="orbit-canvas-container"></div>
             <div id="graph-toolbar">
                 <button id="btn-edit-mode" title="Toggle graph editor">Edit Graph</button>
-                <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
-                <button id="btn-set-start" title="Set selected node as start">Set Start</button>
-                <button id="btn-new-graph" title="Clear current graph">New Graph</button>
-                <button id="btn-save-graph" title="Save current graph">Save Graph</button>
-                <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
+                <span id="edit-only-controls" class="edit-only" hidden>
+                    <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
+                    <button id="btn-set-start" title="Set selected node as start">Set Start</button>
+                    <button id="btn-new-graph" title="Clear current graph">New Graph</button>
+                    <button id="btn-save-graph" title="Save current graph">Save Graph</button>
+                    <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
+                </span>
                 <button id="btn-hide-walls" class="active" title="Clip near-side geometry">Hide Walls</button>
                 <button id="btn-orient" title="Cycle scene orientation (saved per scene)">Orient ↻</button>
                 <select id="graph-select" title="Load a saved graph">
@@ -1776,10 +1778,12 @@
 
         // Edit mode toggle
         const btnEditMode = document.getElementById('btn-edit-mode');
+        const editOnlyControls = document.getElementById('edit-only-controls');
         btnEditMode.addEventListener('click', () => {
             if (liveMode) return;  // can't edit while live
             editMode = !editMode;
             btnEditMode.classList.toggle('active', editMode);
+            editOnlyControls.hidden = !editMode;
 
             // Hide robot during editing, show when navigating
             robotGroup.visible = !editMode;
@@ -1804,6 +1808,7 @@
             if (!editMode) {
                 editMode = true;
                 btnEditMode.classList.add('active');
+                editOnlyControls.hidden = false;
             }
 
             connectMode = !connectMode;
@@ -1927,6 +1932,7 @@
                 if (editMode) {
                     editMode = false;
                     btnEditMode.classList.remove('active');
+                    editOnlyControls.hidden = true;
                     connectMode = false;
                     document.getElementById('btn-add-edge').classList.remove('active');
                 }
