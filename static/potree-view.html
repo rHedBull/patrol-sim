@@ -98,6 +98,15 @@
         viewer.setBackground('black');
         viewer.useHQ = true;                    // High-Quality Splatting (paraboloid splats + EDL).
 
+        // The scenePointCloud group is rotated -π/2 around X so the cloud
+        // (UTM Z-up) renders Y-up to match the parent's Three.js frame. But
+        // Potree initialises the camera with Z-up (`up=(0,0,1)`), so without
+        // this override `view.lookAt` produces a rolled image — content is
+        // correctly placed but the horizon is rotated 90°. Force Y-up on the
+        // camera and on Potree's View so lookAt resolves orientation cleanly.
+        viewer.scene.cameraP.up.set(0, 1, 0);
+        if (viewer.scene.cameraO) viewer.scene.cameraO.up.set(0, 1, 0);
+
         // We drive the camera externally — but Potree's HQ splat renderer
         // dereferences `viewer.controls.sceneControls`, so we must leave the
         // default controls in place. Our per-frame `view.position` / `lookAt`
@@ -193,6 +202,9 @@
                 const view = viewer.scene.view;
                 if (msg.position) view.position.set(msg.position[0], msg.position[1], msg.position[2]);
                 if (msg.target)   view.lookAt(msg.target[0], msg.target[1], msg.target[2]);
+                // Re-assert Y-up after every lookAt; Potree's View can mutate
+                // the camera up via its yaw/pitch math otherwise.
+                viewer.scene.cameraP.up.set(0, 1, 0);
                 if (typeof msg.fov === 'number') viewer.setFOV(msg.fov);
                 if (typeof msg.near === 'number') viewer.scene.cameraP.near = msg.near;
                 if (typeof msg.far === 'number')  viewer.scene.cameraP.far  = msg.far;
