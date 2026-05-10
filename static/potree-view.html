@@ -156,24 +156,13 @@
 
                 // Axis convention: Potree loads UTM data Z-up (X=easting,
                 // Y=northing, Z=height). Parent app is Three.js Y-up
-                // (X=easting, Y=height, Z=-northing). Rotate the entire
-                // scenePointCloud group -90° around X so axes match.
+                // (X=easting, Y=height, Z=-northing). Both sides keep raw
+                // UTM (the mesh is NOT recentered to origin — verified at
+                // runtime: parent's robotPosition is in the same UTM frame
+                // as the cloud's). So the rotation alone aligns up-axes;
+                // no translation is needed and adding one moves the cloud
+                // away from the camera.
                 viewer.scene.scenePointCloud.rotation.x = -Math.PI / 2;
-
-                // Recenter to mesh-local origin: the parent app's mesh is
-                // origin-centered, but the cloud retains raw UTM coords
-                // (88km/435km offset), so robot poses in mesh-local space
-                // would otherwise land hundreds of km from the cloud.
-                // We translate the *group*, not the cloud, so Potree's LOD
-                // math still runs in the cloud's native coordinate space.
-                // Group transform order is T·R, so to land world=(0,0,0) for
-                // local bbox center (cx,cy,cz), with R(p)=(x,z,-y), we need
-                // T = -R(c) = (-cx, -cz, cy).
-                const bb = currentPointcloud.boundingBox;
-                const cx = (bb.min.x + bb.max.x) / 2;
-                const cy = (bb.min.y + bb.max.y) / 2;
-                const cz = (bb.min.z + bb.max.z) / 2;
-                viewer.scene.scenePointCloud.position.set(-cx, -cz, cy);
                 viewer.scene.scenePointCloud.updateMatrixWorld(true);
 
                 setStatus(null);
@@ -183,7 +172,6 @@
                 viewer.fitToScreen(0.6);
                 setTimeout(() => { acceptParentPose = true; }, 1200);
 
-                const bb = currentPointcloud.boundingBox;
                 parent.postMessage({
                     type: 'pointcloud_loaded',
                     url,
