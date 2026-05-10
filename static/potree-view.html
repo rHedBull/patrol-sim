@@ -90,7 +90,7 @@
 
         // ── Boot Potree ─────────────────────────────────────────────────────
         const viewer = new Potree.Viewer(document.getElementById('potree_render_area'));
-        viewer.setEDLEnabled(true);
+        viewer.setEDLEnabled(false);            // Eye-Dome Lighting: muddies HQ splats; can re-enable via 'edl' postMessage.
         viewer.setEDLRadius(1.4);
         viewer.setEDLStrength(0.4);
         viewer.setFOV(60);
