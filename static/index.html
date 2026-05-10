@@ -382,12 +382,15 @@
                     <span>Robot Camera</span>
                     <div class="toggle-group">
                         <button id="btn-view-3d" class="active">3D View</button>
+                        <button id="btn-view-potree">Potree</button>
                         <button id="btn-view-yolo">YOLO View</button>
                     </div>
                 </div>
                 <div id="robot-camera-wrapper">
                     <div id="robot-canvas-container"></div>
                     <img id="annotated-image" alt="Annotated frame">
+                    <iframe id="potree-frame" src="/static/potree-view.html"
+                            style="visibility:hidden; pointer-events:none; position:absolute; inset:0; width:100%; height:100%; border:0; background:#111;"></iframe>
                 </div>
             </div>
             <div id="detection-panel">
@@ -430,6 +433,8 @@
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+        import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
         // ========================================================================
         // STATE
@@ -649,6 +654,11 @@
         // ========================================================================
 
         const gltfLoader = new GLTFLoader();
+        // Decode Meshopt + Draco compressed GLBs produced by scripts/optimize_mesh.py.
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+        gltfLoader.setDRACOLoader(dracoLoader);
+        gltfLoader.setMeshoptDecoder(MeshoptDecoder);
         const loadingOverlay = document.getElementById('loading-overlay');
 
         // Orientation presets: 6 axis-aligned "up" directions.
@@ -1169,7 +1179,65 @@
             robotCamera.rotation.order = 'YXZ';
             robotCamera.rotation.y = robotYaw;
             robotCamera.rotation.x = robotPitch;
+
+            // Mirror the robot pose into the Potree iframe (right panel).
+            sendPotreePose();
         }
+
+        // ─── Potree iframe glue ────────────────────────────────────────────
+        const potreeFrame = document.getElementById('potree-frame');
+        let potreeReady = false;
+        let potreeViewActive = false;
+        let pointcloudUrl = null;
+
+        function postToPotree(msg) {
+            if (!potreeReady || !potreeFrame.contentWindow) return;
+            potreeFrame.contentWindow.postMessage(msg, '*');
+        }
+
+        function sendPotreePose() {
+            if (!potreeViewActive || !potreeReady) return;
+            // Forward vector from yaw/pitch (matches robotCamera.rotation YXZ).
+            const cy = Math.cos(robotPitch), sy = Math.sin(robotPitch);
+            const cx = Math.cos(robotYaw),   sx = Math.sin(robotYaw);
+            const fx = -sx * cy;
+            const fy =  sy;
+            const fz = -cx * cy;
+            const px = robotPosition.x, py = robotPosition.y + 1.0, pz = robotPosition.z;
+            const r = ORIENTATION_PRESETS[orientationIndex].rot;
+            postToPotree({
+                type: 'pose',
+                position: [px, py, pz],
+                target:   [px + fx, py + fy, pz + fz],
+                fov: 60,
+                near: 0.1,
+                far: 500,
+                orientationEuler: r,
+            });
+        }
+
+        window.addEventListener('message', (ev) => {
+            if (ev.source !== potreeFrame.contentWindow) return;
+            const msg = ev.data;
+            if (!msg || typeof msg !== 'object') return;
+            if (msg.type === 'ready') {
+                potreeReady = true;
+                if (pointcloudUrl) postToPotree({ type: 'load', url: pointcloudUrl });
+            } else if (msg.type === 'pointcloud_loaded') {
+                sendPotreePose();
+            } else if (msg.type === 'pointcloud_error') {
+                console.warn('Potree pointcloud error:', msg.error, msg.url);
+            }
+        });
+
+        // Discover the pointcloud URL for the active scene; iframe loads on ready.
+        fetch('/api/scene_info')
+            .then(r => r.json())
+            .then(info => {
+                pointcloudUrl = info.pointcloud_url;
+                if (potreeReady && pointcloudUrl) postToPotree({ type: 'load', url: pointcloudUrl });
+            })
+            .catch(e => console.warn('scene_info fetch failed:', e));
 
         // ========================================================================
         // FRAME STREAMING
@@ -1820,24 +1888,27 @@
         // Camera view toggle
         const btnView3D = document.getElementById('btn-view-3d');
         const btnViewYolo = document.getElementById('btn-view-yolo');
+        const btnViewPotree = document.getElementById('btn-view-potree');
         const annotatedImage = document.getElementById('annotated-image');
         const robotCanvas = robotRenderer.domElement;
 
-        btnView3D.addEventListener('click', () => {
-            showYoloView = false;
-            btnView3D.classList.add('active');
-            btnViewYolo.classList.remove('active');
-            robotCanvas.style.display = 'block';
-            annotatedImage.style.display = 'none';
-        });
+        function setView(mode) {
+            // mode ∈ {'3d', 'potree', 'yolo'}
+            showYoloView   = (mode === 'yolo');
+            potreeViewActive = (mode === 'potree');
+            btnView3D.classList.toggle('active',     mode === '3d');
+            btnViewPotree.classList.toggle('active', mode === 'potree');
+            btnViewYolo.classList.toggle('active',   mode === 'yolo');
+            robotCanvas.style.display    = (mode === '3d')     ? 'block' : 'none';
+            potreeFrame.style.visibility    = (mode === 'potree') ? 'visible' : 'hidden';
+            potreeFrame.style.pointerEvents = (mode === 'potree') ? 'auto'    : 'none';
+            annotatedImage.style.display = (mode === 'yolo')   ? 'block' : 'none';
+            if (potreeViewActive) sendPotreePose();
+        }
 
-        btnViewYolo.addEventListener('click', () => {
-            showYoloView = true;
-            btnViewYolo.classList.add('active');
-            btnView3D.classList.remove('active');
-            robotCanvas.style.display = 'none';
-            annotatedImage.style.display = 'block';
-        });
+        btnView3D.addEventListener('click',     () => setView('3d'));
+        btnViewPotree.addEventListener('click', () => setView('potree'));
+        btnViewYolo.addEventListener('click',   () => setView('yolo'));
 
         // Start/Stop button — toggles live mode
         const btnStartStop = document.getElementById('btn-start-stop');

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+    Potree viewer hosted in an iframe.
+
+    Why an iframe: Potree drags in jQuery, jQuery-UI, jstree, proj4, OpenLayers
+    plus globally-scoped CSS that assumes it owns the page. Hosting it in its
+    own document keeps every one of those globals out of the parent app while
+    still letting us drive its camera in real-time via postMessage.
+
+    Protocol with parent (window.parent):
+      <- { type: "ready" }                    once Potree.Viewer is alive
+      <- { type: "pointcloud_loaded", url }   after a successful load
+      <- { type: "pointcloud_error", url, error }
+      -> { type: "load", url }                load a pointcloud (idempotent per url)
+      -> { type: "pose", position:[x,y,z], target:[x,y,z], fov, near, far,
+                         orientationEuler:[x,y,z] }    drive camera + cloud rotation
+      -> { type: "hq", on: true|false }       toggle High-Quality Splatting
+-->
+<head>
+    <meta charset="UTF-8">
+    <title>Potree View</title>
+
+    <!-- Potree's bundled CSS + its dependencies. Pinned to a release. -->
+    <link rel="stylesheet" type="text/css" href="/static/potree-libs/potree/potree.css">
+    <link rel="stylesheet" type="text/css" href="/static/potree-libs/jquery-ui/jquery-ui.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/potree-libs/openlayers3/ol.css">
+    <link rel="stylesheet" type="text/css" href="/static/potree-libs/spectrum/spectrum.css">
+    <link rel="stylesheet" type="text/css" href="/static/potree-libs/jstree/themes/mixed/style.css">
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+        #potree_render_area { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+        /* Hide Potree's sidebar/menus — parent app owns the UI. */
+        #potree_sidebar_container, .potree_menu_toggle { display: none !important; }
+        #status {
+            position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+            color: #888; font: 14px -apple-system, sans-serif; text-align: center;
+            pointer-events: none;
+        }
+        #status .hint { color: #555; font-size: 12px; margin-top: 8px; max-width: 360px; font-family: monospace; }
+        #diag {
+            position: absolute; left: 8px; top: 8px; z-index: 10;
+            background: rgba(0,0,0,0.6); color: #9f9; font: 11px monospace;
+            padding: 6px 8px; border-radius: 4px; pointer-events: none;
+            white-space: pre; max-width: 380px;
+        }
+    </style>
+</head>
+<body>
+    <div class="potree_container">
+        <div id="potree_render_area">
+            <div id="status">
+                <div id="status-msg">Loading Potree…</div>
+                <div class="hint" id="status-hint"></div>
+            </div>
+        </div>
+        <div id="potree_sidebar_container"></div>
+    </div>
+    <div id="diag">booting…</div>
+
+    <!-- Potree's vendored libs: order matters. -->
+    <script src="/static/potree-libs/jquery/jquery-3.1.1.min.js"></script>
+    <script src="/static/potree-libs/spectrum/spectrum.js"></script>
+    <script src="/static/potree-libs/jquery-ui/jquery-ui.min.js"></script>
+    <script src="/static/potree-libs/other/BinaryHeap.js"></script>
+    <script src="/static/potree-libs/tween/tween.min.js"></script>
+    <script src="/static/potree-libs/d3/d3.js"></script>
+    <script src="/static/potree-libs/proj4/proj4.js"></script>
+    <script src="/static/potree-libs/openlayers3/ol.js"></script>
+    <script src="/static/potree-libs/i18next/i18next.js"></script>
+    <script src="/static/potree-libs/jstree/jstree.js"></script>
+    <script src="/static/potree-libs/potree/potree.js"></script>
+    <script src="/static/potree-libs/plasio/js/laslaz.js"></script>
+
+    <script>
+        const statusBox = document.getElementById('status');
+        const statusMsg = document.getElementById('status-msg');
+        const statusHint = document.getElementById('status-hint');
+
+        function setStatus(msg, hint) {
+            if (!msg) { statusBox.style.display = 'none'; return; }
+            statusBox.style.display = 'block';
+            statusMsg.textContent = msg;
+            statusHint.textContent = hint || '';
+        }
+
+        // ── Boot Potree ─────────────────────────────────────────────────────
+        const viewer = new Potree.Viewer(document.getElementById('potree_render_area'));
+        viewer.setEDLEnabled(true);
+        viewer.setEDLRadius(1.4);
+        viewer.setEDLStrength(0.4);
+        viewer.setFOV(60);
+        viewer.setPointBudget(8_000_000);
+        viewer.setBackground('black');
+        viewer.useHQ = true;                    // High-Quality Splatting (paraboloid splats + EDL).
+
+        // We drive the camera externally — but Potree's HQ splat renderer
+        // dereferences `viewer.controls.sceneControls`, so we must leave the
+        // default controls in place. Our per-frame `view.position` / `lookAt`
+        // writes win against any user input on the iframe canvas.
+
+        let currentPointcloud = null;
+        let currentUrl = null;
+        let lastPose = null;
+        let acceptParentPose = false;     // wait until first cloud loads + we fit once.
+
+        const diagEl = document.getElementById('diag');
+        function fmtV(v, d=1) { return v ? `[${v.x.toFixed(d)}, ${v.y.toFixed(d)}, ${v.z.toFixed(d)}]` : 'null'; }
+        function tickDiag() {
+            const v = viewer.scene.view;
+            const camP = v && v.position;
+            const lines = [
+                `url: ${currentUrl || '(none)'}`,
+                `pc:  ${currentPointcloud ? 'loaded' : 'not loaded'}`,
+                `cam: ${fmtV(camP)}`,
+                `pose-in: ${lastPose ? `${lastPose.position.join(',')} -> ${lastPose.target.join(',')}` : '(none)'}`,
+                `accepting parent pose: ${acceptParentPose}`,
+                `useHQ: ${viewer.useHQ}`,
+            ];
+            if (currentPointcloud) {
+                const bb = currentPointcloud.boundingBox;
+                lines.push(`pc bbox min: [${bb.min.x.toFixed(1)}, ${bb.min.y.toFixed(1)}, ${bb.min.z.toFixed(1)}]`);
+                lines.push(`pc bbox max: [${bb.max.x.toFixed(1)}, ${bb.max.y.toFixed(1)}, ${bb.max.z.toFixed(1)}]`);
+                lines.push(`pc position: ${fmtV(currentPointcloud.position)}`);
+            }
+            diagEl.textContent = lines.join('\n');
+        }
+        setInterval(tickDiag, 250);
+
+        function loadPointcloud(url) {
+            if (url === currentUrl) return;
+            currentUrl = url;
+            setStatus('Loading pointcloud…', url);
+
+            Potree.loadPointCloud(url, 'scene', (e) => {
+                if (!e || !e.pointcloud) {
+                    setStatus('Failed to load pointcloud.', url);
+                    parent.postMessage({ type: 'pointcloud_error', url, error: 'no pointcloud in response' }, '*');
+                    return;
+                }
+                if (currentPointcloud) {
+                    viewer.scene.scenePointCloud.remove(currentPointcloud);
+                }
+                currentPointcloud = e.pointcloud;
+                const m = currentPointcloud.material;
+                m.size = 1.0;
+                m.minSize = 2;
+                m.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+                m.shape = Potree.PointShape.PARABOLOID;   // surface-splat shape.
+                m.activeAttributeName = 'rgba';
+                viewer.scene.addPointCloud(currentPointcloud);
+
+                // Axis convention: Potree loads UTM data Z-up (X=easting,
+                // Y=northing, Z=height). Parent app is Three.js Y-up
+                // (X=easting, Y=height, Z=-northing). Rotate the entire
+                // scenePointCloud group -90° around X (around world origin,
+                // not the cloud's local origin) so axes match. We don't
+                // translate the cloud — that would break Potree LOD picking.
+                viewer.scene.scenePointCloud.rotation.x = -Math.PI / 2;
+                viewer.scene.scenePointCloud.updateMatrixWorld(true);
+
+                setStatus(null);
+
+                // Frame the cloud once so we can confirm it actually rendered,
+                // before letting the parent's robot-pose drive the camera.
+                viewer.fitToScreen(0.6);
+                setTimeout(() => { acceptParentPose = true; }, 1200);
+
+                const bb = currentPointcloud.boundingBox;
+                parent.postMessage({
+                    type: 'pointcloud_loaded',
+                    url,
+                    bbox: { min: [bb.min.x, bb.min.y, bb.min.z], max: [bb.max.x, bb.max.y, bb.max.z] },
+                }, '*');
+            });
+        }
+
+        // ── postMessage protocol ────────────────────────────────────────────
+        window.addEventListener('message', (ev) => {
+            const msg = ev.data;
+            if (!msg || typeof msg !== 'object') return;
+
+            if (msg.type === 'load' && typeof msg.url === 'string') {
+                loadPointcloud(msg.url);
+            } else if (msg.type === 'pose') {
+                lastPose = msg;
+                if (!acceptParentPose) return;
+                const view = viewer.scene.view;
+                if (msg.position) view.position.set(msg.position[0], msg.position[1], msg.position[2]);
+                if (msg.target)   view.lookAt(msg.target[0], msg.target[1], msg.target[2]);
+                if (typeof msg.fov === 'number') viewer.setFOV(msg.fov);
+                if (typeof msg.near === 'number') viewer.scene.cameraP.near = msg.near;
+                if (typeof msg.far === 'number')  viewer.scene.cameraP.far  = msg.far;
+                viewer.scene.cameraP.updateProjectionMatrix();
+                // Note: we deliberately do NOT rotate the pointcloud here.
+                // Rotating around the cloud's UTM-anchored origin throws it
+                // hundreds of km away. Orientation alignment will be done by
+                // rotating the incoming camera pose instead — TODO once load
+                // perf is verified.
+            } else if (msg.type === 'hq') {
+                viewer.useHQ = !!msg.on;
+            }
+        });
+
+        // Re-broadcast `ready` until a `load` request arrives. The parent
+        // attaches its listener inline, but iframe boot can still beat it on
+        // some browsers — a few retries is cheaper than a custom handshake.
+        let readyAcked = false;
+        const readyTick = setInterval(() => {
+            if (readyAcked) { clearInterval(readyTick); return; }
+            parent.postMessage({ type: 'ready' }, '*');
+        }, 250);
+        // Treat any incoming message from parent as the ack: if parent is
+        // talking back, our listener-on-listener race is over.
+        window.addEventListener('message', () => { readyAcked = true; });
+        setStatus('Waiting for pointcloud…',
+            'Drop PotreeConverter v2 output at static/pointclouds/<scene>/');
+    </script>
+</body>
+</html>

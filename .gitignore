@@ -14,3 +14,11 @@ HANDOFF-*.md
 # pi wip & ideas (personal, not committed by default)
 WIP.md
 IDEAS.md
+
+# Claude / agent local state
+.claude/
+
+# Large vendored / generated assets (not committed)
+static/potree-libs
+static/pointclouds
+graphs/

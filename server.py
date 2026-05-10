@@ -65,15 +65,28 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+def _send_glb(path: Path):
+    # conditional=True -> ETag/304; max_age caches across reloads.
+    resp = send_file(
+        str(path),
+        mimetype="model/gltf-binary",
+        conditional=True,
+        max_age=3600,
+    )
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
 @app.route("/mesh.glb")
 def serve_mesh():
-    return send_file(str(MESH_PATH), mimetype="model/gltf-binary")
+    assert MESH_PATH is not None
+    return _send_glb(MESH_PATH)
 
 
 @app.route("/mesh_no_walls.glb")
 def serve_mesh_no_walls():
     if NO_WALLS_MESH_PATH and NO_WALLS_MESH_PATH.exists():
-        return send_file(str(NO_WALLS_MESH_PATH), mimetype="model/gltf-binary")
+        return _send_glb(NO_WALLS_MESH_PATH)
     return "No walls mesh not available", 404
 
 
@@ -186,6 +199,23 @@ def list_graphs():
     return jsonify(names)
 
 
+@app.route("/api/scene_info", methods=["GET"])
+def get_scene_info():
+    """Return the active scene name plus a Potree pointcloud URL if one exists.
+
+    Pointclouds are looked up at ``static/pointclouds/<scene>/metadata.json``
+    (the output of PotreeConverter v2). When absent, ``pointcloud_url`` is None
+    and the right-panel Potree view shows a placeholder.
+    """
+    scene_name = GRAPHS_DIR.name
+    static_dir = Path(__file__).resolve().parent / "static"
+    pc_meta = static_dir / "pointclouds" / scene_name / "metadata.json"
+    pointcloud_url = (
+        f"/static/pointclouds/{scene_name}/metadata.json" if pc_meta.exists() else None
+    )
+    return jsonify({"scene": scene_name, "pointcloud_url": pointcloud_url})
+
+
 @app.route("/api/orientation", methods=["GET"])
 def get_orientation():
     path = GRAPHS_DIR / "_orientation.json"
@@ -296,29 +326,61 @@ def handle_robot_command(data):
 # Startup
 # ---------------------------------------------------------------------------
 
+def _maybe_optimize(path: Path, *, threshold_mb: float = 50.0) -> Path:
+    """For large GLBs, return a cached Meshopt-compressed sibling.
+
+    Skips optimization if the file is already small or the path itself looks
+    optimized. The optimized cache lives next to the source as
+    ``<stem>.optimized.glb`` so it persists across runs.
+    """
+    if path.stem.endswith(".optimized") or path.name.endswith(".optimized.glb"):
+        return path
+    size_mb = path.stat().st_size / (1024 * 1024)
+    if size_mb < threshold_mb:
+        return path
+
+    from scripts.optimize_mesh import default_output, optimize  # local import: optional dep on npx
+
+    cached = default_output(path)
+    print(f"[server] mesh is {size_mb:.0f} MB -> producing/loading optimized cache: {cached}")
+    try:
+        return optimize(path, cached)
+    except Exception as exc:  # pragma: no cover
+        print(f"[server] optimization failed ({exc}); serving raw mesh", file=sys.stderr)
+        return path
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python server.py <mesh_path> [no_walls_mesh_path]", file=sys.stderr)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    if not args:
+        print("Usage: python server.py [--raw] <mesh_path> [no_walls_mesh_path]", file=sys.stderr)
         sys.exit(1)
 
-    MESH_PATH = Path(sys.argv[1]).resolve()
-    if not MESH_PATH.exists():
-        print(f"Mesh file not found: {MESH_PATH}", file=sys.stderr)
-        sys.exit(1)
+    raw_mode = "--raw" in flags
 
-    if len(sys.argv) >= 3:
-        NO_WALLS_MESH_PATH = Path(sys.argv[2]).resolve()
-        if not NO_WALLS_MESH_PATH.exists():
-            print(f"No-walls mesh not found: {NO_WALLS_MESH_PATH}", file=sys.stderr)
+    raw_mesh_path = Path(args[0]).resolve()
+    if not raw_mesh_path.exists():
+        print(f"Mesh file not found: {raw_mesh_path}", file=sys.stderr)
+        sys.exit(1)
+    MESH_PATH = raw_mesh_path if raw_mode else _maybe_optimize(raw_mesh_path)
+
+    if len(args) >= 2:
+        raw_no_walls = Path(args[1]).resolve()
+        if not raw_no_walls.exists():
+            print(f"No-walls mesh not found: {raw_no_walls}", file=sys.stderr)
             NO_WALLS_MESH_PATH = None
+        else:
+            NO_WALLS_MESH_PATH = raw_no_walls if raw_mode else _maybe_optimize(raw_no_walls)
 
     # Namespace graphs per mesh so each scene has its own collection.
-    # If the file stem is generic (e.g. "mesh"), fall back to the parent dir name.
-    scene_name = MESH_PATH.stem
-    if scene_name in {"mesh", "scene"} and MESH_PATH.parent.name == "source":
-        scene_name = MESH_PATH.parent.parent.name
+    # Use the raw (pre-optimization) path so the cached `.optimized` suffix
+    # doesn't fragment graph storage.
+    scene_name = raw_mesh_path.stem
+    if scene_name in {"mesh", "scene"} and raw_mesh_path.parent.name == "source":
+        scene_name = raw_mesh_path.parent.parent.name
     elif scene_name in {"mesh", "scene"}:
-        scene_name = MESH_PATH.parent.name
+        scene_name = raw_mesh_path.parent.name
     GRAPHS_DIR = GRAPHS_ROOT / scene_name
     GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Graphs dir: {GRAPHS_DIR}")
