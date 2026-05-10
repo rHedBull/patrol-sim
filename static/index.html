@@ -381,8 +381,7 @@
                 <div id="robot-camera-header">
                     <span>Robot Camera</span>
                     <div class="toggle-group">
-                        <button id="btn-view-3d" class="active">3D View</button>
-                        <button id="btn-view-potree">Potree</button>
+                        <button id="btn-view-potree" class="active">Potree</button>
                         <button id="btn-view-yolo">YOLO View</button>
                     </div>
                 </div>
@@ -1885,30 +1884,33 @@
             }
         });
 
-        // Camera view toggle
-        const btnView3D = document.getElementById('btn-view-3d');
+        // Camera view toggle. The legacy 3D View has been removed; Potree is
+        // the default. YOLO remains as a passive overlay toggle.
         const btnViewYolo = document.getElementById('btn-view-yolo');
         const btnViewPotree = document.getElementById('btn-view-potree');
         const annotatedImage = document.getElementById('annotated-image');
         const robotCanvas = robotRenderer.domElement;
 
         function setView(mode) {
-            // mode ∈ {'3d', 'potree', 'yolo'}
+            // mode ∈ {'potree', 'yolo'}
             showYoloView   = (mode === 'yolo');
             potreeViewActive = (mode === 'potree');
-            btnView3D.classList.toggle('active',     mode === '3d');
             btnViewPotree.classList.toggle('active', mode === 'potree');
             btnViewYolo.classList.toggle('active',   mode === 'yolo');
-            robotCanvas.style.display    = (mode === '3d')     ? 'block' : 'none';
+            // The 3D robot canvas is no longer surfaced; keep it hidden so it
+            // can still drive offscreen YOLO captures without painting.
+            robotCanvas.style.display = 'none';
             potreeFrame.style.visibility    = (mode === 'potree') ? 'visible' : 'hidden';
             potreeFrame.style.pointerEvents = (mode === 'potree') ? 'auto'    : 'none';
-            annotatedImage.style.display = (mode === 'yolo')   ? 'block' : 'none';
+            annotatedImage.style.display = (mode === 'yolo') ? 'block' : 'none';
             if (potreeViewActive) sendPotreePose();
         }
 
-        btnView3D.addEventListener('click',     () => setView('3d'));
         btnViewPotree.addEventListener('click', () => setView('potree'));
         btnViewYolo.addEventListener('click',   () => setView('yolo'));
+
+        // Default to Potree on load.
+        setView('potree');
 
         // Start/Stop button — toggles live mode
         const btnStartStop = document.getElementById('btn-start-stop');
