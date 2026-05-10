@@ -16,6 +16,10 @@
       -> { type: "pose", position:[x,y,z], target:[x,y,z], fov, near, far,
                          orientationEuler:[x,y,z] }    drive camera + cloud rotation
       -> { type: "hq", on: true|false }       toggle High-Quality Splatting
+      -> { type: "edl", on: true|false, radius?, strength? }
+                                              toggle / tune Eye-Dome Lighting
+      -> { type: "quality", pointBudget?, minSize?, shape? }
+                                              live-tune render quality
 -->
 <head>
     <meta charset="UTF-8">
@@ -153,10 +157,23 @@
                 // Axis convention: Potree loads UTM data Z-up (X=easting,
                 // Y=northing, Z=height). Parent app is Three.js Y-up
                 // (X=easting, Y=height, Z=-northing). Rotate the entire
-                // scenePointCloud group -90° around X (around world origin,
-                // not the cloud's local origin) so axes match. We don't
-                // translate the cloud — that would break Potree LOD picking.
+                // scenePointCloud group -90° around X so axes match.
                 viewer.scene.scenePointCloud.rotation.x = -Math.PI / 2;
+
+                // Recenter to mesh-local origin: the parent app's mesh is
+                // origin-centered, but the cloud retains raw UTM coords
+                // (88km/435km offset), so robot poses in mesh-local space
+                // would otherwise land hundreds of km from the cloud.
+                // We translate the *group*, not the cloud, so Potree's LOD
+                // math still runs in the cloud's native coordinate space.
+                // Group transform order is T·R, so to land world=(0,0,0) for
+                // local bbox center (cx,cy,cz), with R(p)=(x,z,-y), we need
+                // T = -R(c) = (-cx, -cz, cy).
+                const bb = currentPointcloud.boundingBox;
+                const cx = (bb.min.x + bb.max.x) / 2;
+                const cy = (bb.min.y + bb.max.y) / 2;
+                const cz = (bb.min.z + bb.max.z) / 2;
+                viewer.scene.scenePointCloud.position.set(-cx, -cz, cy);
                 viewer.scene.scenePointCloud.updateMatrixWorld(true);
 
                 setStatus(null);
@@ -199,6 +216,17 @@
                 // perf is verified.
             } else if (msg.type === 'hq') {
                 viewer.useHQ = !!msg.on;
+            } else if (msg.type === 'edl') {
+                if (typeof msg.on === 'boolean') viewer.setEDLEnabled(msg.on);
+                if (typeof msg.radius === 'number') viewer.setEDLRadius(msg.radius);
+                if (typeof msg.strength === 'number') viewer.setEDLStrength(msg.strength);
+            } else if (msg.type === 'quality' && currentPointcloud) {
+                const m = currentPointcloud.material;
+                if (typeof msg.pointBudget === 'number') viewer.setPointBudget(msg.pointBudget);
+                if (typeof msg.minSize === 'number') m.minSize = msg.minSize;
+                if (typeof msg.shape === 'string' && Potree.PointShape[msg.shape] !== undefined) {
+                    m.shape = Potree.PointShape[msg.shape];
+                }
             }
         });
 
