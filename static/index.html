@@ -237,6 +237,37 @@
 
         .control-spacer { flex: 1; }
 
+        #plan-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 28px;
+        }
+        #plan-controls[hidden] { display: none; }
+        #plan-waypoints {
+            display: inline-flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            max-width: 360px;
+        }
+        .wp-chip {
+            background: rgba(255,152,0,0.18);
+            border: 1px solid rgba(255,152,0,0.6);
+            color: #ffb74d;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-family: monospace;
+        }
+        .wp-chip .wp-idx {
+            color: #888;
+            margin-right: 4px;
+        }
+        #plan-controls button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
         #target-display {
             font-size: 12px;
             color: #888;
@@ -345,6 +376,23 @@
         }
 
         .hidden { display: none !important; }
+
+        /* Headless mode: hide all UI chrome so screenshots capture only the
+           render canvases. The right panel (Potree) becomes the full viewport
+           when ?view=potree, and the left panel when ?view=mesh. */
+        body.headless #header,
+        body.headless #controls-bar,
+        body.headless #graph-toolbar,
+        body.headless #mode-indicator,
+        body.headless #node-tooltip,
+        body.headless #robot-camera-header,
+        body.headless #detection-panel,
+        body.headless #loading-overlay { display: none !important; }
+        body.headless #main { top: 0 !important; bottom: 0 !important; }
+        body.headless.view-potree #left-panel { display: none !important; }
+        body.headless.view-potree #right-panel { width: 100% !important; }
+        body.headless.view-mesh #right-panel { display: none !important; }
+        body.headless.view-mesh #left-panel { width: 100% !important; }
     </style>
 </head>
 <body>
@@ -409,6 +457,15 @@
     <!-- Controls Bar -->
     <div id="controls-bar">
         <button id="btn-start-stop">Start</button>
+        <div class="control-group" id="route-mode-group">
+            <label>Route</label>
+            <button id="btn-mode-interactive" class="active" title="Click a node to navigate">Interactive</button>
+            <button id="btn-mode-plan" title="Build a multi-waypoint plan, then press Start">Plan</button>
+        </div>
+        <div id="plan-controls" hidden>
+            <span id="plan-waypoints" title="Waypoints in order"></span>
+            <button id="btn-plan-clear" disabled>Clear</button>
+        </div>
         <div class="control-group">
             <label>Speed</label>
             <input type="range" id="speed-slider" min="0.1" max="5" step="0.1" value="1.0">
@@ -459,8 +516,28 @@
         let robotDelta = 1 / 60;  // frame delta in seconds
         let robotCurrentNode = null;   // last node the robot arrived at
 
+        // ── Headless mode parameters (driven by Playwright) ────────────────
+        const URL_PARAMS = new URLSearchParams(window.location.search);
+        const HEADLESS = URL_PARAMS.get('headless') === '1';
+        const HEADLESS_PLAN = (URL_PARAMS.get('plan') || '').split(',').map(s => s.trim()).filter(Boolean);
+        const HEADLESS_GRAPH = URL_PARAMS.get('graph') || null;
+        const HEADLESS_VIEW = URL_PARAMS.get('view') || 'potree';
+        const HEADLESS_SPEED = parseFloat(URL_PARAMS.get('speed') || '2.0');
+        if (HEADLESS) {
+            document.body.classList.add('headless', `view-${HEADLESS_VIEW}`);
+        }
+        // Signal flags polled by Playwright
+        window.__headlessReady = false;
+        window.__planDone = false;
+
         // Live mode: robot is active and navigating
         let liveMode = false;
+
+        // Routing sub-mode within live mode: 'interactive' (click to drive)
+        // or 'plan' (click to append waypoints, Go to drive the chain).
+        let routeMode = 'interactive';
+        let planWaypoints = [];        // ordered node IDs
+        let planActive = false;        // true while a plan is being driven
 
         // Editor state
         let editMode = false;
@@ -783,12 +860,22 @@
 
                 loadingOverlay.classList.add('hidden');
 
-                // Load graph list; auto-load default if it exists
-                fetchGraphList().then(() => {
+                // Load graph list; prefer named load, otherwise sync the
+                // graph the server already has in memory.
+                fetchGraphList().then(async () => {
                     const select = document.getElementById('graph-select');
-                    const hasDefault = Array.from(select.options).some(o => o.value === 'default');
-                    if (hasDefault) {
-                        loadGraph('default');
+                    if (HEADLESS && HEADLESS_GRAPH) {
+                        await loadGraph(HEADLESS_GRAPH);
+                    } else {
+                        const hasDefault = Array.from(select.options).some(o => o.value === 'default');
+                        if (hasDefault) {
+                            await loadGraph('default');
+                        } else {
+                            await fetchGraph();
+                        }
+                    }
+                    if (HEADLESS) {
+                        runHeadlessPlan();
                     }
                 });
             },
@@ -1120,6 +1207,12 @@
 
                 currentTargetNodeId = null;
                 document.getElementById('target-name').textContent = 'None';
+                if (planActive) {
+                    planActive = false;
+                    planWaypoints = [];
+                    refreshPlanUI();
+                    window.__planDone = true;
+                }
                 updateNodeVisuals();
                 return;
             }
@@ -1477,8 +1570,11 @@
                 return;
             }
 
-            // Live mode: click a node to navigate robot there
-            if (liveMode && clickedNodeId !== null) {
+            // Plan mode: clicks build the waypoint list (allowed pre-Start).
+            if (routeMode === 'plan' && clickedNodeId !== null) {
+                addPlanWaypoint(clickedNodeId);
+            } else if (liveMode && clickedNodeId !== null) {
+                // Interactive live: click a node to navigate the robot there.
                 setRobotTarget(clickedNodeId);
             }
             mouseDownPos = null;
@@ -1721,6 +1817,117 @@
                 target: nodeId,
                 from_node: robotCurrentNode
             });
+        }
+
+        // ========================================================================
+        // PLAN MODE
+        // ========================================================================
+
+        function renderPlanWaypoints() {
+            const container = document.getElementById('plan-waypoints');
+            while (container.firstChild) container.removeChild(container.firstChild);
+            for (let i = 0; i < planWaypoints.length; i++) {
+                const chip = document.createElement('span');
+                chip.className = 'wp-chip';
+                chip.title = 'Click to remove';
+                const idx = document.createElement('span');
+                idx.className = 'wp-idx';
+                idx.textContent = String(i + 1);
+                chip.appendChild(idx);
+                chip.appendChild(document.createTextNode(planWaypoints[i]));
+                const here = i;
+                chip.addEventListener('click', () => {
+                    if (planActive) return;
+                    planWaypoints.splice(here, 1);
+                    refreshPlanUI();
+                });
+                container.appendChild(chip);
+            }
+            const clearBtn = document.getElementById('btn-plan-clear');
+            clearBtn.disabled = planActive || planWaypoints.length === 0;
+        }
+
+        function refreshPlanUI() {
+            renderPlanWaypoints();
+            updateNodeVisuals();
+        }
+
+        function addPlanWaypoint(nodeId) {
+            if (planActive) return;
+            if (planWaypoints.length > 0 && planWaypoints[planWaypoints.length - 1] === nodeId) {
+                return;
+            }
+            planWaypoints.push(nodeId);
+            refreshPlanUI();
+        }
+
+        function clearPlan() {
+            if (planActive) return;
+            planWaypoints = [];
+            refreshPlanUI();
+        }
+
+        function startPlan() {
+            if (planActive || planWaypoints.length < 1) return;
+            const seq = [robotCurrentNode, ...planWaypoints].filter(n => n);
+            const waypoints = [];
+            for (const n of seq) {
+                if (waypoints.length === 0 || waypoints[waypoints.length - 1] !== n) {
+                    waypoints.push(n);
+                }
+            }
+            if (waypoints.length < 2) {
+                console.warn('Plan needs at least one waypoint different from current node');
+                return;
+            }
+            planActive = true;
+            currentTargetNodeId = planWaypoints[planWaypoints.length - 1];
+            document.getElementById('target-name').textContent = currentTargetNodeId;
+            updateNodeVisuals();
+            socket.emit('plan_command', { waypoints });
+            renderPlanWaypoints();
+        }
+
+        async function runHeadlessPlan() {
+            // Wait for graph to be populated
+            const deadline = performance.now() + 30000;
+            while (graphNodes.length === 0 && performance.now() < deadline) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+            if (graphNodes.length === 0) {
+                console.error('[headless] no graph loaded');
+                return;
+            }
+            // Validate plan node IDs
+            const known = new Set(graphNodes.map(n => n.id));
+            const missing = HEADLESS_PLAN.filter(id => !known.has(id));
+            if (missing.length) {
+                console.error('[headless] unknown nodes in plan:', missing);
+                return;
+            }
+
+            robotSpeed = HEADLESS_SPEED;
+            document.getElementById('speed-slider').value = String(HEADLESS_SPEED);
+            document.getElementById('speed-value').textContent = HEADLESS_SPEED.toFixed(1);
+
+            // Set plan mode and load waypoints BEFORE pressing Start so the
+            // Start handler auto-fires startPlan().
+            setRouteMode('plan');
+            planWaypoints = HEADLESS_PLAN.slice();
+            refreshPlanUI();
+
+            // Wait for Potree to be loaded if requested
+            if (HEADLESS_VIEW === 'potree') {
+                const potDeadline = performance.now() + 60000;
+                while (!potreeReady && performance.now() < potDeadline) {
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                await new Promise(r => setTimeout(r, 1500));
+            }
+
+            window.__headlessReady = true;
+            // Start enters live mode and (because plan has waypoints) drives it.
+            document.getElementById('btn-start-stop').click();
         }
 
         // ========================================================================
@@ -2004,7 +2211,12 @@
                 robotGroup.visible = true;
                 fpsResultCount = 0;
                 fpsLastReset = performance.now();
-                updateModeIndicator('Live: click a waypoint to navigate');
+                setRouteMode(routeMode);
+
+                // Plan mode: drive the user-built plan immediately.
+                if (routeMode === 'plan' && planWaypoints.length > 0) {
+                    startPlan();
+                }
             } else {
                 // Exit live mode
                 btnStartStop.textContent = 'Start';
@@ -2013,10 +2225,39 @@
                 clearPathHighlight();
                 currentTargetNodeId = null;
                 document.getElementById('target-name').textContent = 'None';
+                planActive = false;
                 updateNodeVisuals();
-                updateModeIndicator('Navigate: orbit view');
+                updateModeIndicator(routeMode === 'plan'
+                    ? 'Plan: click nodes in order, press Start'
+                    : 'Navigate: orbit view');
             }
         });
+
+        // Route-mode toggle (Interactive / Plan) inside live mode
+        const btnModeInteractive = document.getElementById('btn-mode-interactive');
+        const btnModePlan = document.getElementById('btn-mode-plan');
+        const planControls = document.getElementById('plan-controls');
+        const routeModeGroup = document.getElementById('route-mode-group');
+
+        function setRouteMode(mode) {
+            routeMode = mode;
+            btnModeInteractive.classList.toggle('active', mode === 'interactive');
+            btnModePlan.classList.toggle('active', mode === 'plan');
+            planControls.hidden = (mode !== 'plan');
+            if (mode === 'plan') {
+                renderPlanWaypoints();
+                updateModeIndicator(liveMode
+                    ? 'Plan: driving plan…'
+                    : 'Plan: click nodes in order, press Start');
+            } else {
+                updateModeIndicator(liveMode
+                    ? 'Live: click a waypoint to navigate'
+                    : 'Navigate: orbit view');
+            }
+        }
+        btnModeInteractive.addEventListener('click', () => setRouteMode('interactive'));
+        btnModePlan.addEventListener('click', () => setRouteMode('plan'));
+        document.getElementById('btn-plan-clear').addEventListener('click', clearPlan);
 
         // Speed slider
         const speedSlider = document.getElementById('speed-slider');

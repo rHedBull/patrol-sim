@@ -305,6 +305,41 @@ def handle_frame(data):
     )
 
 
+@socketio.on("plan_command")
+def handle_plan_command(data):
+    """Drive the robot through an ordered list of waypoints.
+
+    Runs A* between consecutive waypoints, concatenates the legs (without
+    duplicating the shared join node), and emits the full path back over the
+    same `robot_path` channel that interactive mode uses.
+    """
+    if robot is None:
+        emit("robot_path", {"error": "No robot (graph has no nodes)"})
+        return
+
+    waypoints = data.get("waypoints") or []
+    if len(waypoints) < 2:
+        emit("robot_path", {"error": "Plan needs at least 2 waypoints"})
+        return
+
+    full: list[str] = []
+    for a, b in zip(waypoints, waypoints[1:]):
+        leg = nav_graph.find_path(a, b)
+        if leg is None:
+            emit("robot_path", {"error": f"No path from '{a}' to '{b}'"})
+            return
+        if full and full[-1] == leg[0]:
+            full.extend(leg[1:])
+        else:
+            full.extend(leg)
+
+    # Sync robot to plan start so movement state is consistent.
+    robot.current_node = full[0]
+    robot._path = list(full)
+    robot._path_index = 1
+    emit("robot_path", {"path": full})
+
+
 @socketio.on("robot_command")
 def handle_robot_command(data):
     """Set a target node for the robot and return the planned path."""
