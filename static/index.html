@@ -1295,6 +1295,22 @@
             return null;
         }
 
+        function getEdgeAtMouse(event) {
+            // Returns { from, to } of the edge under the cursor, or null.
+            // Raycasts a slightly fattened set of edge cylinders so users
+            // don't have to hit the visual 2cm tube exactly.
+            getMousePosition(event, orbitContainer);
+            raycaster.setFromCamera(mouse, orbitCamera);
+            // Raycaster.params.Line tolerance is irrelevant for Mesh; widen
+            // by temporarily scaling cylinders' picking via raycaster instead:
+            // simplest is just to test against the cylinders directly.
+            if (graphEdgeLines.length === 0) return null;
+            const hits = raycaster.intersectObjects(graphEdgeLines, false);
+            if (hits.length === 0) return null;
+            const ud = hits[0].object.userData;
+            return { from: ud.edgeFrom, to: ud.edgeTo };
+        }
+
         function getFloorPosition(event) {
             getMousePosition(event, orbitContainer);
             raycaster.setFromCamera(mouse, orbitCamera);
@@ -1420,15 +1436,26 @@
                         firstSelectedNode = clickedNodeId;
                         selectedNodeId = clickedNodeId;
                         updateNodeVisuals();
-                        updateModeIndicator('Select second node to connect');
+                        updateModeIndicator('Connect: click second node to link, or click an edge to delete it');
                     } else if (clickedNodeId !== firstSelectedNode) {
+                        // Sticky: stay in connect mode after creating an edge
+                        // so the user can chain multiple connections.
                         createEdge(firstSelectedNode, clickedNodeId);
                         firstSelectedNode = null;
                         selectedNodeId = null;
-                        connectMode = false;
-                        document.getElementById('btn-add-edge').classList.remove('active');
                         updateNodeVisuals();
-                        updateModeIndicator(editMode ? 'Edit: dbl-click add, drag move, Del remove, right-click set start' : 'Navigate: orbit view');
+                        updateModeIndicator('Connect: click first node to link, or click an edge to delete it');
+                    }
+                } else {
+                    // No node hit — try an edge for deletion. Only delete
+                    // when no node selection is in progress so a missed
+                    // second click doesn't silently nuke an edge.
+                    if (firstSelectedNode === null) {
+                        const edge = getEdgeAtMouse(e);
+                        if (edge) {
+                            deleteEdge(edge.from, edge.to);
+                            updateModeIndicator('Connect: edge deleted. Click a node to start a new link.');
+                        }
                     }
                 }
                 mouseDownPos = null;
@@ -1522,6 +1549,27 @@
                 // Add locally anyway for responsiveness
                 graphNodes.push(nodeData);
                 renderGraph();
+            }
+        }
+
+        async function deleteEdge(fromId, toId) {
+            try {
+                const response = await fetch('/api/graph/edge', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ from: fromId, to: toId })
+                });
+                if (!response.ok) {
+                    console.error('Failed to delete edge:', await response.text());
+                    return;
+                }
+                graphEdges = graphEdges.filter(e =>
+                    !((e.from === fromId && e.to === toId) ||
+                      (e.from === toId && e.to === fromId))
+                );
+                renderGraph();
+            } catch (err) {
+                console.error('deleteEdge error:', err);
             }
         }
 
@@ -1818,7 +1866,7 @@
             updateNodeVisuals();
 
             updateModeIndicator(connectMode
-                ? 'Connect mode: click first node, then second node'
+                ? 'Connect: click first node to link, or click an edge to delete it'
                 : 'Edit: dbl-click add, drag move, Del remove, right-click set start'
             );
         });

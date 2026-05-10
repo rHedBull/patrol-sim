@@ -170,6 +170,13 @@ def add_edge():
     return jsonify({"ok": True})
 
 
+@app.route("/api/graph/edge", methods=["DELETE"])
+def delete_edge():
+    data = request.get_json(force=True)
+    nav_graph.remove_edge(data["from"], data["to"])
+    return jsonify({"ok": True})
+
+
 # ── Graph persistence ────────────────────────────────────────────────────
 
 
