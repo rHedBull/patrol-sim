@@ -237,6 +237,111 @@
 
         .control-spacer { flex: 1; }
 
+        #plan-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 28px;
+        }
+        #plan-controls[hidden] { display: none; }
+        #plan-waypoints {
+            display: inline-flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            max-width: 360px;
+        }
+        .wp-chip {
+            background: rgba(255,152,0,0.18);
+            border: 1px solid rgba(255,152,0,0.6);
+            color: #ffb74d;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-family: monospace;
+        }
+        .wp-chip .wp-idx {
+            color: #888;
+            margin-right: 4px;
+        }
+        #plan-controls button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        #plan-controls .render-sep {
+            width: 1px; height: 18px; background: #333; margin: 0 4px;
+        }
+        #plan-controls label.rl {
+            font-size: 11px; color: #aaa; display: inline-flex;
+            align-items: center; gap: 4px;
+        }
+        #plan-controls input[type=text],
+        #plan-controls input[type=number],
+        #plan-controls select {
+            background: rgba(255,255,255,0.06); border: 1px solid #333;
+            color: #ddd; padding: 2px 4px; border-radius: 3px;
+            font-family: monospace; font-size: 11px;
+        }
+        #render-progress {
+            font-size: 11px; color: #ffb74d; font-family: monospace;
+            min-width: 120px;
+        }
+        /* Orbit render strip in the bottom controls bar — same look as
+           the plan-controls block so they sit consistently next to each
+           other when both are visible. */
+        #orbit-render-controls {
+            display: flex; align-items: center; gap: 6px; min-height: 28px;
+        }
+        #orbit-render-controls[hidden] { display: none; }
+        #orbit-render-controls .orbit-bar-label {
+            color: #00d4d4; font-size: 11px; font-weight: 600;
+        }
+        #orbit-render-controls label.rl {
+            font-size: 11px; color: #aaa; display: inline-flex;
+            align-items: center; gap: 4px;
+        }
+        #orbit-render-controls input, #orbit-render-controls select {
+            background: rgba(255,255,255,0.06); border: 1px solid #333;
+            color: #ddd; padding: 2px 4px; border-radius: 3px;
+            font-family: monospace; font-size: 11px;
+        }
+        #orbit-render-controls button {
+            background: rgba(0,150,150,0.3); border: 1px solid #066;
+            color: #cee; padding: 4px 10px; border-radius: 3px; cursor: pointer;
+            font-size: 11px;
+        }
+        #orbit-render-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #orbit-progress {
+            font-size: 11px; color: #00d4d4; font-family: monospace; min-width: 120px;
+        }
+
+        /* Orbit-render panel — sits below the graph toolbar overlay */
+        #orbit-controls {
+            position: absolute; top: 8px; left: 220px; z-index: 10;
+            background: rgba(20,20,20,0.92); border: 1px solid #333;
+            border-radius: 4px; padding: 4px 8px;
+            display: flex; align-items: center; gap: 6px; min-height: 28px;
+        }
+        #orbit-controls[hidden] { display: none; }
+        #orbit-controls .orb-label { color: #00d4d4; font-size: 11px; font-weight: 600; }
+        #orbit-controls label.rl {
+            font-size: 11px; color: #aaa; display: inline-flex;
+            align-items: center; gap: 4px;
+        }
+        #orbit-controls input, #orbit-controls select {
+            background: rgba(255,255,255,0.06); border: 1px solid #333;
+            color: #ddd; padding: 2px 4px; border-radius: 3px;
+            font-family: monospace; font-size: 11px;
+        }
+        #orbit-controls button {
+            background: rgba(0,150,150,0.3); border: 1px solid #066;
+            color: #cee; padding: 4px 10px; border-radius: 3px; cursor: pointer;
+            font-size: 11px;
+        }
+        #orbit-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #orbit-progress {
+            font-size: 11px; color: #00d4d4; font-family: monospace; min-width: 120px;
+        }
+
         #target-display {
             font-size: 12px;
             color: #888;
@@ -282,6 +387,11 @@
 
         #graph-toolbar button:hover { background: rgba(60,60,60,0.9); color: #fff; }
         #graph-toolbar button.active { background: rgba(76,175,80,0.5); border-color: #4caf50; color: #fff; }
+        #graph-toolbar .edit-submode { display: inline-flex; gap: 0; }
+        #graph-toolbar .edit-submode button { border-radius: 0; }
+        #graph-toolbar .edit-submode button:first-child { border-radius: 4px 0 0 4px; border-right-width: 0; }
+        #graph-toolbar .edit-submode button:last-child { border-radius: 0 4px 4px 0; }
+        #graph-toolbar .edit-submode button.active { background: rgba(0,180,180,0.45); border-color: #088; color: #fff; }
 
         #graph-toolbar select {
             background: rgba(30,30,30,0.85);
@@ -345,6 +455,23 @@
         }
 
         .hidden { display: none !important; }
+
+        /* Headless mode: hide all UI chrome so screenshots capture only the
+           render canvases. The right panel (Potree) becomes the full viewport
+           when ?view=potree, and the left panel when ?view=mesh. */
+        body.headless #header,
+        body.headless #controls-bar,
+        body.headless #graph-toolbar,
+        body.headless #mode-indicator,
+        body.headless #node-tooltip,
+        body.headless #robot-camera-header,
+        body.headless #detection-panel,
+        body.headless #loading-overlay { display: none !important; }
+        body.headless #main { top: 0 !important; bottom: 0 !important; }
+        body.headless.view-potree #left-panel { display: none !important; }
+        body.headless.view-potree #right-panel { width: 100% !important; }
+        body.headless.view-mesh #right-panel { display: none !important; }
+        body.headless.view-mesh #left-panel { width: 100% !important; }
     </style>
 </head>
 <body>
@@ -359,16 +486,29 @@
             <div id="orbit-canvas-container"></div>
             <div id="graph-toolbar">
                 <button id="btn-edit-mode" title="Toggle graph editor">Edit Graph</button>
-                <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
-                <button id="btn-set-start" title="Set selected node as start">Set Start</button>
-                <button id="btn-new-graph" title="Clear current graph">New Graph</button>
-                <button id="btn-save-graph" title="Save current graph">Save Graph</button>
-                <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
+                <span id="edit-only-controls" class="edit-only" hidden>
+                    <span class="edit-submode">
+                        <button id="btn-mode-waypoints" class="active" title="Multi-node waypoint graph">Waypoints</button>
+                        <button id="btn-mode-orbit" title="Single-node orbit (1 tip + 1 orbit)">Orbit</button>
+                    </span>
+                    <button id="btn-add-edge" title="Connect two nodes">Connect Nodes</button>
+                    <button id="btn-set-start" title="Set selected node as start">Set Start</button>
+                    <button id="btn-new-graph" title="Clear current graph">New Graph</button>
+                    <button id="btn-save-graph" title="Save current graph">Save Graph</button>
+                    <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
+                </span>
                 <button id="btn-hide-walls" class="active" title="Clip near-side geometry">Hide Walls</button>
                 <button id="btn-orient" title="Cycle scene orientation (saved per scene)">Orient ↻</button>
                 <select id="graph-select" title="Load a saved graph">
                     <option value="">-- Load Graph --</option>
                 </select>
+            </div>
+            <div id="orbit-controls" hidden>
+                <span class="orb-label">Orbit:</span>
+                <label class="rl">r <input type="number" id="orbit-radius" value="5" min="0.1" max="500" step="0.5" style="width:55px"> m</label>
+                <label class="rl">h <input type="number" id="orbit-height" value="2" min="-200" max="200" step="0.5" style="width:55px"> m</label>
+                <label class="rl">n <input type="number" id="orbit-samples" value="36" min="3" max="360" step="1" style="width:48px"></label>
+                <span style="opacity:0.6; font-size:11px">drag the orange handle to set start angle</span>
             </div>
             <div id="mode-indicator">Navigate: orbit view</div>
             <div id="node-tooltip"></div>
@@ -381,13 +521,15 @@
                 <div id="robot-camera-header">
                     <span>Robot Camera</span>
                     <div class="toggle-group">
-                        <button id="btn-view-3d" class="active">3D View</button>
+                        <button id="btn-view-potree" class="active">Potree</button>
                         <button id="btn-view-yolo">YOLO View</button>
                     </div>
                 </div>
                 <div id="robot-camera-wrapper">
                     <div id="robot-canvas-container"></div>
                     <img id="annotated-image" alt="Annotated frame">
+                    <iframe id="potree-frame" src="/static/potree-view.html"
+                            style="visibility:hidden; pointer-events:none; position:absolute; inset:0; width:100%; height:100%; border:0; background:#111;"></iframe>
                 </div>
             </div>
             <div id="detection-panel">
@@ -405,6 +547,43 @@
     <!-- Controls Bar -->
     <div id="controls-bar">
         <button id="btn-start-stop">Start</button>
+        <div class="control-group" id="route-mode-group">
+            <label>Route</label>
+            <button id="btn-mode-interactive" class="active" title="Click a node to navigate">Interactive</button>
+            <button id="btn-mode-plan" title="Build a multi-waypoint plan, then press Start">Plan</button>
+        </div>
+        <div id="orbit-render-controls" hidden>
+            <span class="orbit-bar-label">Orbit:</span>
+            <label class="rl">name <input type="text" id="orbit-name" value="orbit01" size="10"></label>
+            <label class="rl">quality
+                <select id="orbit-quality">
+                    <option value="standard">standard</option>
+                    <option value="high" selected>high</option>
+                    <option value="ultra">ultra</option>
+                </select>
+            </label>
+            <label class="rl" title="Override the quality preset's stable-frames count (blank = preset default)">stable
+                <input type="number" id="orbit-stable" min="1" max="120" step="1" placeholder="auto" style="width:48px">
+            </label>
+            <button id="btn-orbit-render" disabled title="Render PNGs around the orbit circle">Render Orbit</button>
+            <span id="orbit-progress"></span>
+        </div>
+        <div id="plan-controls" hidden>
+            <span id="plan-waypoints" title="Waypoints in order"></span>
+            <button id="btn-plan-clear" disabled>Clear</button>
+            <span class="render-sep"></span>
+            <label class="rl">name <input type="text" id="render-name" value="route01" size="10"></label>
+            <label class="rl">step <input type="number" id="render-spacing" value="1.0" min="0.1" step="0.1" style="width:48px"> m</label>
+            <label class="rl">quality
+                <select id="render-quality">
+                    <option value="standard">standard</option>
+                    <option value="high" selected>high</option>
+                    <option value="ultra">ultra</option>
+                </select>
+            </label>
+            <button id="btn-plan-render" disabled title="Render PNGs along the path">Render</button>
+            <span id="render-progress"></span>
+        </div>
         <div class="control-group">
             <label>Speed</label>
             <input type="range" id="speed-slider" min="0.1" max="5" step="0.1" value="1.0">
@@ -430,6 +609,8 @@
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+        import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
         // ========================================================================
         // STATE
@@ -453,11 +634,32 @@
         let robotDelta = 1 / 60;  // frame delta in seconds
         let robotCurrentNode = null;   // last node the robot arrived at
 
+        // ── Headless mode parameters (driven by Playwright) ────────────────
+        const URL_PARAMS = new URLSearchParams(window.location.search);
+        const HEADLESS = URL_PARAMS.get('headless') === '1';
+        const HEADLESS_PLAN = (URL_PARAMS.get('plan') || '').split(',').map(s => s.trim()).filter(Boolean);
+        const HEADLESS_GRAPH = URL_PARAMS.get('graph') || null;
+        const HEADLESS_VIEW = URL_PARAMS.get('view') || 'potree';
+        const HEADLESS_SPEED = parseFloat(URL_PARAMS.get('speed') || '2.0');
+        if (HEADLESS) {
+            document.body.classList.add('headless', `view-${HEADLESS_VIEW}`);
+        }
+        // Signal flags polled by Playwright
+        window.__headlessReady = false;
+        window.__planDone = false;
+
         // Live mode: robot is active and navigating
         let liveMode = false;
 
+        // Routing sub-mode within live mode: 'interactive' (click to drive)
+        // or 'plan' (click to append waypoints, Go to drive the chain).
+        let routeMode = 'interactive';
+        let planWaypoints = [];        // ordered node IDs
+        let planActive = false;        // true while a plan is being driven
+
         // Editor state
         let editMode = false;
+        let orbitMode = false;  // sub-mode of editMode: 1 node + 1 orbit, no edges
         let connectMode = false;
         let firstSelectedNode = null;   // for edge creation
         let hoveredNodeId = null;
@@ -649,6 +851,11 @@
         // ========================================================================
 
         const gltfLoader = new GLTFLoader();
+        // Decode Meshopt + Draco compressed GLBs produced by scripts/optimize_mesh.py.
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+        gltfLoader.setDRACOLoader(dracoLoader);
+        gltfLoader.setMeshoptDecoder(MeshoptDecoder);
         const loadingOverlay = document.getElementById('loading-overlay');
 
         // Orientation presets: 6 axis-aligned "up" directions.
@@ -741,6 +948,7 @@
                 orbitScene.add(mesh);
                 collisionMesh = mesh;
                 fullMesh = mesh;
+                groundYCache.clear();  // any fallback Ys cached pre-mesh are now stale
                 window._debugMesh = mesh;
 
                 // Pick orientation: saved override → auto-detect.
@@ -772,12 +980,22 @@
 
                 loadingOverlay.classList.add('hidden');
 
-                // Load graph list; auto-load default if it exists
-                fetchGraphList().then(() => {
+                // Load graph list; prefer named load, otherwise sync the
+                // graph the server already has in memory.
+                fetchGraphList().then(async () => {
                     const select = document.getElementById('graph-select');
-                    const hasDefault = Array.from(select.options).some(o => o.value === 'default');
-                    if (hasDefault) {
-                        loadGraph('default');
+                    if (HEADLESS && HEADLESS_GRAPH) {
+                        await loadGraph(HEADLESS_GRAPH);
+                    } else {
+                        const hasDefault = Array.from(select.options).some(o => o.value === 'default');
+                        if (hasDefault) {
+                            await loadGraph('default');
+                        } else {
+                            await fetchGraph();
+                        }
+                    }
+                    if (HEADLESS) {
+                        runHeadlessPlan();
                     }
                 });
             },
@@ -815,8 +1033,38 @@
         // Active path highlight lines
         let pathHighlightLines = [];
 
-        const NODE_HEIGHT = 0.5;  // how high above floor the node sphere sits
+        const NODE_HEIGHT = 0.5;  // default lift above floor for new nodes
         const EDGE_RADIUS = 0.02; // tube radius for edges
+
+        // Reusable raycaster for ground sampling — separate from the
+        // global `raycaster` so we don't trample mouse-pick state.
+        const groundRaycaster = new THREE.Raycaster();
+        const GROUND_RAY_FROM = new THREE.Vector3();
+        const GROUND_RAY_DIR = new THREE.Vector3(0, -1, 0);
+
+        // Ground-Y cache: raycasting collisionMesh (millions of tris) per
+        // node every renderGraph froze the UI during drags. Key by
+        // cm-rounded (x,z); invalidate when a node's X/Z changes.
+        const groundYCache = new Map();
+        const groundKey = (x, z) => `${Math.round(x * 100)}|${Math.round(z * 100)}`;
+
+        function getGroundYAt(x, z, fallbackY) {
+            const key = groundKey(x, z);
+            const cached = groundYCache.get(key);
+            if (cached !== undefined) return cached;
+            GROUND_RAY_FROM.set(x, 1e4, z);
+            groundRaycaster.set(GROUND_RAY_FROM, GROUND_RAY_DIR);
+            let y = fallbackY;
+            if (collisionMesh) {
+                const hits = groundRaycaster.intersectObject(collisionMesh, true);
+                if (hits.length > 0) y = hits[0].point.y;
+            } else if (typeof floorPlane !== 'undefined' && floorPlane) {
+                const fhits = groundRaycaster.intersectObject(floorPlane, false);
+                if (fhits.length > 0) y = fhits[0].point.y;
+            }
+            groundYCache.set(key, y);
+            return y;
+        }
 
         function renderGraph() {
             // Clear existing graph visuals
@@ -832,15 +1080,22 @@
                 const y = node.position[1];
                 const z = node.position[2];
 
-                // Post (vertical cylinder from floor to node)
+                // Sphere (the "viewpoint") — sits NODE_HEIGHT above y by
+                // default, but Ctrl-drag lifts it freely up into the sky.
+                const sphereY = y + NODE_HEIGHT;
+
+                // Post stretches from the actual ground under (x,z) up
+                // to the sphere, so it grows/shrinks with the lift.
+                const groundY = getGroundYAt(x, z, y);
+                const postLen = Math.max(0.001, sphereY - groundY);
                 const post = new THREE.Mesh(postGeometry, postMaterial);
-                post.position.set(x, y + NODE_HEIGHT / 2, z);
-                post.scale.y = NODE_HEIGHT;
+                post.position.set(x, groundY + postLen / 2, z);
+                post.scale.y = postLen;
                 graphGroup.add(post);
 
                 // Node sphere at top of post
                 const mesh = new THREE.Mesh(nodeGeometry, nodeMaterialDefault.clone());
-                mesh.position.set(x, y + NODE_HEIGHT, z);
+                mesh.position.set(x, sphereY, z);
                 mesh.userData.nodeId = node.id;
                 graphGroup.add(mesh);
                 graphNodeMeshes[node.id] = mesh;
@@ -902,6 +1157,10 @@
                     mesh.scale.setScalar(1.0);
                 }
             }
+            // Orbit preview tracks the selected node — refresh whenever
+            // selection visuals are touched. Guarded for early init order
+            // (this is defined before updateOrbitPreview is hoisted).
+            if (typeof updateOrbitPreview === 'function') updateOrbitPreview();
         }
 
         function clearPathHighlight() {
@@ -1109,6 +1368,12 @@
 
                 currentTargetNodeId = null;
                 document.getElementById('target-name').textContent = 'None';
+                if (planActive) {
+                    planActive = false;
+                    planWaypoints = [];
+                    refreshPlanUI();
+                    window.__planDone = true;
+                }
                 updateNodeVisuals();
                 return;
             }
@@ -1169,7 +1434,96 @@
             robotCamera.rotation.order = 'YXZ';
             robotCamera.rotation.y = robotYaw;
             robotCamera.rotation.x = robotPitch;
+
+            // Mirror the robot pose into the Potree iframe (right panel).
+            sendPotreePose();
         }
+
+        // ─── Potree iframe glue ────────────────────────────────────────────
+        const potreeFrame = document.getElementById('potree-frame');
+        let potreeReady = false;
+        let potreeViewActive = false;
+        let pointcloudUrl = null;
+
+        function postToPotree(msg) {
+            if (!potreeReady || !potreeFrame.contentWindow) return;
+            potreeFrame.contentWindow.postMessage(msg, '*');
+        }
+
+        function sendPotreePose() {
+            if (!potreeViewActive || !potreeReady) return;
+            // While an orbit render is sweeping the camera around the tip,
+            // the per-frame robot pose would clobber every orbit pose
+            // before Potree had a chance to render it (the animation loop
+            // fires faster than the iframe re-renders), causing every
+            // captured frame to be byte-identical. Yield to the orbit.
+            if (orbitActive) return;
+            // Forward vector from yaw/pitch (matches robotCamera.rotation YXZ).
+            const cy = Math.cos(robotPitch), sy = Math.sin(robotPitch);
+            const cx = Math.cos(robotYaw),   sx = Math.sin(robotYaw);
+            const fx = -sx * cy;
+            const fy =  sy;
+            const fz = -cx * cy;
+            const px = robotPosition.x, py = robotPosition.y + 1.0, pz = robotPosition.z;
+            const r = ORIENTATION_PRESETS[orientationIndex].rot;
+            postToPotree({
+                type: 'pose',
+                position: [px, py, pz],
+                target:   [px + fx, py + fy, pz + fz],
+                fov: 60,
+                near: 0.1,
+                far: 500,
+                orientationEuler: r,
+            });
+        }
+
+        // Pending capture promises keyed by id.
+        const _pendingCaptures = new Map();
+        function captureFromPotree({ maxMs = 8000, stableFrames = 8, parentTimeoutMs = 20000 } = {}) {
+            return new Promise((resolve, reject) => {
+                if (!potreeReady) return reject(new Error('Potree not ready'));
+                const id = 'cap_' + Math.random().toString(36).slice(2, 9);
+                const timer = setTimeout(() => {
+                    _pendingCaptures.delete(id);
+                    reject(new Error('capture timeout'));
+                }, parentTimeoutMs);
+                _pendingCaptures.set(id, { resolve, reject, timer });
+                postToPotree({ type: 'capture', id, maxMs, stableFrames });
+            });
+        }
+
+        window.addEventListener('message', (ev) => {
+            if (ev.source !== potreeFrame.contentWindow) return;
+            const msg = ev.data;
+            if (!msg || typeof msg !== 'object') return;
+            if (msg.type === 'ready') {
+                potreeReady = true;
+                if (pointcloudUrl) postToPotree({ type: 'load', url: pointcloudUrl });
+                // Re-evaluate buttons that depend on Potree readiness.
+                if (typeof updateOrbitPreview === 'function') updateOrbitPreview();
+            } else if (msg.type === 'pointcloud_loaded') {
+                sendPotreePose();
+            } else if (msg.type === 'pointcloud_error') {
+                console.warn('Potree pointcloud error:', msg.error, msg.url);
+            } else if (msg.type === 'capture_result') {
+                const pending = _pendingCaptures.get(msg.id);
+                if (pending) {
+                    clearTimeout(pending.timer);
+                    _pendingCaptures.delete(msg.id);
+                    if (msg.error) pending.reject(new Error(msg.error));
+                    else pending.resolve({ dataUrl: msg.dataUrl, stats: msg.stats, intrinsics: msg.intrinsics });
+                }
+            }
+        });
+
+        // Discover the pointcloud URL for the active scene; iframe loads on ready.
+        fetch('/api/scene_info')
+            .then(r => r.json())
+            .then(info => {
+                pointcloudUrl = info.pointcloud_url;
+                if (potreeReady && pointcloudUrl) postToPotree({ type: 'load', url: pointcloudUrl });
+            })
+            .catch(e => console.warn('scene_info fetch failed:', e));
 
         // ========================================================================
         // FRAME STREAMING
@@ -1224,6 +1578,22 @@
                 return intersects[0].object.userData.nodeId;
             }
             return null;
+        }
+
+        function getEdgeAtMouse(event) {
+            // Returns { from, to } of the edge under the cursor, or null.
+            // Raycasts a slightly fattened set of edge cylinders so users
+            // don't have to hit the visual 2cm tube exactly.
+            getMousePosition(event, orbitContainer);
+            raycaster.setFromCamera(mouse, orbitCamera);
+            // Raycaster.params.Line tolerance is irrelevant for Mesh; widen
+            // by temporarily scaling cylinders' picking via raycaster instead:
+            // simplest is just to test against the cylinders directly.
+            if (graphEdgeLines.length === 0) return null;
+            const hits = raycaster.intersectObjects(graphEdgeLines, false);
+            if (hits.length === 0) return null;
+            const ud = hits[0].object.userData;
+            return { from: ud.edgeFrom, to: ud.edgeTo };
         }
 
         function getFloorPosition(event) {
@@ -1281,22 +1651,63 @@
         });
 
         let mouseDownPos = null;
+        let dragStartY = null;        // node Y at drag start (for vertical drag)
         const DRAG_THRESHOLD = 5; // pixels before a click becomes a drag
 
         orbitContainer.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return; // left button only
             mouseDownPos = { x: e.clientX, y: e.clientY };
 
+            // Orbit-mode start handle takes precedence over node picking
+            // so the handle never gets "lost" behind the tip sphere.
+            if (editMode && orbitMode && orbitStartHandleMesh) {
+                getMousePosition(e, orbitContainer);
+                raycaster.setFromCamera(mouse, orbitCamera);
+                const hits = raycaster.intersectObject(orbitStartHandleMesh, false);
+                if (hits.length > 0) {
+                    draggingStartHandle = true;
+                    isDragging = true;
+                    orbitControls.enabled = false;
+                    return;
+                }
+            }
+
             if (editMode && !connectMode) {
                 const nodeId = getNodeAtMouse(e);
                 if (nodeId !== null) {
                     draggingNodeId = nodeId;
                     isDragging = false; // not yet, need to exceed threshold
+                    const node = graphNodes.find(n => n.id === draggingNodeId);
+                    dragStartY = node ? node.position[1] : 0;
                 }
             }
         });
 
         orbitContainer.addEventListener('mousemove', (e) => {
+            // Drag the orbit start handle around the circle. We solve for
+            // the cursor's intersection with the horizontal plane at
+            // y = tip_y + h, then compute theta from the tip in (x,z).
+            if (draggingStartHandle && orbitMode && graphNodes.length > 0) {
+                const p = readOrbitParams();
+                if (!p) return;
+                const tip = orbitTipFor(graphNodes[0]);
+                const planeY = tip[1] + p.h;
+                getMousePosition(e, orbitContainer);
+                raycaster.setFromCamera(mouse, orbitCamera);
+                const ro = raycaster.ray.origin;
+                const rd = raycaster.ray.direction;
+                if (Math.abs(rd.y) < 1e-6) return;  // ray ∥ plane
+                const t = (planeY - ro.y) / rd.y;
+                if (t < 0) return;                  // plane is behind camera
+                const x = ro.x + t * rd.x;
+                const z = ro.z + t * rd.z;
+                let theta = Math.atan2(z - tip[2], x - tip[0]);   // radians
+                let deg = theta * 180 / Math.PI;
+                deg = ((deg % 360) + 360) % 360;                  // [0, 360)
+                orbitStartThetaDeg = Math.round(deg * 10) / 10;
+                updateOrbitPreview();
+                return;
+            }
             if (draggingNodeId && mouseDownPos) {
                 const dx = e.clientX - mouseDownPos.x;
                 const dy = e.clientY - mouseDownPos.y;
@@ -1305,11 +1716,52 @@
                         isDragging = true;
                         orbitControls.enabled = false; // disable orbit while dragging
                     }
-                    // Move node to floor position under cursor
-                    const floorPos = getFloorPosition(e);
-                    if (floorPos) {
-                        const node = graphNodes.find(n => n.id === draggingNodeId);
-                        if (node) {
+                    const node = graphNodes.find(n => n.id === draggingNodeId);
+                    if (!node) return;
+
+                    if (e.ctrlKey) {
+                        // Vertical drag — lift node along the world up axis
+                        // through its ground anchor (X,Z stay fixed). We
+                        // project the cursor ray onto that vertical axis
+                        // and read the closest point's Y, so the node
+                        // tracks the cursor in world space, not screen px.
+                        getMousePosition(e, orbitContainer);
+                        raycaster.setFromCamera(mouse, orbitCamera);
+                        const ax = node.position[0];
+                        const az = node.position[2];
+                        const ro = raycaster.ray.origin;
+                        const rd = raycaster.ray.direction;
+                        // Closest-point between axis (ax, *, az), dir (0,1,0)
+                        // and the camera ray. Solve for axis parameter t:
+                        //   t = (b*e - c*d) / (a*c - b*b)
+                        // where a=1 (axisDir·axisDir), c=rd·rd, b=rd.y,
+                        // d = -(ro.y - 0), e = rd·(axisOrigin - ro).
+                        const b = rd.y;
+                        const c = rd.dot(rd);
+                        const wx = ax - ro.x, wy = -ro.y, wz = az - ro.z;
+                        const d = wy;                // axisDir·w0
+                        const e2 = rd.x * wx + rd.y * wy + rd.z * wz;
+                        const denom = c - b * b;     // a=1
+                        let newSphereY;
+                        if (Math.abs(denom) < 1e-6) {
+                            newSphereY = dragStartY + NODE_HEIGHT;
+                        } else {
+                            newSphereY = (b * e2 - c * d) / denom;
+                        }
+                        // node.position[1] is the post base; sphere renders
+                        // at position[1] + NODE_HEIGHT, so back it out so
+                        // the green sphere itself tracks the cursor.
+                        const newY = newSphereY - NODE_HEIGHT;
+                        node.position = [
+                            node.position[0],
+                            Math.round(newY * 100) / 100,
+                            node.position[2]
+                        ];
+                        renderGraph();
+                    } else {
+                        // Horizontal drag — snap to floor under cursor.
+                        const floorPos = getFloorPosition(e);
+                        if (floorPos) {
                             node.position = [
                                 Math.round(floorPos.x * 100) / 100,
                                 Math.round(floorPos.y * 100) / 100,
@@ -1325,6 +1777,14 @@
         orbitContainer.addEventListener('mouseup', (e) => {
             if (e.button !== 0) return;
 
+            if (draggingStartHandle) {
+                draggingStartHandle = false;
+                isDragging = false;
+                mouseDownPos = null;
+                orbitControls.enabled = true;
+                return;
+            }
+
             if (isDragging && draggingNodeId) {
                 // Finish drag — sync to server
                 const node = graphNodes.find(n => n.id === draggingNodeId);
@@ -1335,11 +1795,13 @@
                 draggingNodeId = null;
                 isDragging = false;
                 mouseDownPos = null;
+                dragStartY = null;
                 return;
             }
 
             draggingNodeId = null;
             isDragging = false;
+            dragStartY = null;
             orbitControls.enabled = true;
 
             // Treat as click
@@ -1351,15 +1813,26 @@
                         firstSelectedNode = clickedNodeId;
                         selectedNodeId = clickedNodeId;
                         updateNodeVisuals();
-                        updateModeIndicator('Select second node to connect');
+                        updateModeIndicator('Connect: click second node to link, or click an edge to delete it');
                     } else if (clickedNodeId !== firstSelectedNode) {
+                        // Sticky: stay in connect mode after creating an edge
+                        // so the user can chain multiple connections.
                         createEdge(firstSelectedNode, clickedNodeId);
                         firstSelectedNode = null;
                         selectedNodeId = null;
-                        connectMode = false;
-                        document.getElementById('btn-add-edge').classList.remove('active');
                         updateNodeVisuals();
-                        updateModeIndicator(editMode ? 'Edit: dbl-click add, drag move, Del remove, right-click set start' : 'Navigate: orbit view');
+                        updateModeIndicator('Connect: click first node to link, or click an edge to delete it');
+                    }
+                } else {
+                    // No node hit — try an edge for deletion. Only delete
+                    // when no node selection is in progress so a missed
+                    // second click doesn't silently nuke an edge.
+                    if (firstSelectedNode === null) {
+                        const edge = getEdgeAtMouse(e);
+                        if (edge) {
+                            deleteEdge(edge.from, edge.to);
+                            updateModeIndicator('Connect: edge deleted. Click a node to start a new link.');
+                        }
                     }
                 }
                 mouseDownPos = null;
@@ -1381,8 +1854,11 @@
                 return;
             }
 
-            // Live mode: click a node to navigate robot there
-            if (liveMode && clickedNodeId !== null) {
+            // Plan mode: clicks build the waypoint list (allowed pre-Start).
+            if (routeMode === 'plan' && clickedNodeId !== null) {
+                addPlanWaypoint(clickedNodeId);
+            } else if (liveMode && clickedNodeId !== null) {
+                // Interactive live: click a node to navigate the robot there.
                 setRobotTarget(clickedNodeId);
             }
             mouseDownPos = null;
@@ -1422,6 +1898,29 @@
         // ========================================================================
 
         async function addNode(position) {
+            // In orbit mode the graph is a single tip — re-route an "add"
+            // to a move of the existing tip so dblclick repositions it.
+            if (orbitMode && graphNodes.length > 0) {
+                const tip = graphNodes[0];
+                tip.position = [
+                    Math.round(position.x * 100) / 100,
+                    Math.round(position.y * 100) / 100,
+                    Math.round(position.z * 100) / 100,
+                ];
+                groundYCache.delete(groundKey(tip.position[0], tip.position[2]));
+                try {
+                    await fetch('/api/graph/node/' + encodeURIComponent(tip.id), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ position: tip.position }),
+                    });
+                } catch (e) {
+                    console.error('Failed to move orbit tip:', e);
+                }
+                selectedNodeId = tip.id;
+                renderGraph();
+                return;
+            }
             const id = 'node_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
             const nodeData = {
                 id: id,
@@ -1444,6 +1943,9 @@
                     // Use server-returned data if available, otherwise use local
                     const newNode = result.node || nodeData;
                     graphNodes.push(newNode);
+                    // In orbit mode, auto-select the freshly placed tip so
+                    // the orbit panel pops up without requiring a click.
+                    if (orbitMode) selectedNodeId = newNode.id;
                     renderGraph();
                 } else {
                     console.error('Failed to add node:', await response.text());
@@ -1452,7 +1954,29 @@
                 console.error('Failed to add node:', e);
                 // Add locally anyway for responsiveness
                 graphNodes.push(nodeData);
+                if (orbitMode) selectedNodeId = nodeData.id;
                 renderGraph();
+            }
+        }
+
+        async function deleteEdge(fromId, toId) {
+            try {
+                const response = await fetch('/api/graph/edge', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ from: fromId, to: toId })
+                });
+                if (!response.ok) {
+                    console.error('Failed to delete edge:', await response.text());
+                    return;
+                }
+                graphEdges = graphEdges.filter(e =>
+                    !((e.from === fromId && e.to === toId) ||
+                      (e.from === toId && e.to === fromId))
+                );
+                renderGraph();
+            } catch (err) {
+                console.error('deleteEdge error:', err);
             }
         }
 
@@ -1607,6 +2131,522 @@
         }
 
         // ========================================================================
+        // PLAN MODE
+        // ========================================================================
+
+        function renderPlanWaypoints() {
+            const container = document.getElementById('plan-waypoints');
+            while (container.firstChild) container.removeChild(container.firstChild);
+            for (let i = 0; i < planWaypoints.length; i++) {
+                const chip = document.createElement('span');
+                chip.className = 'wp-chip';
+                chip.title = 'Click to remove';
+                const idx = document.createElement('span');
+                idx.className = 'wp-idx';
+                idx.textContent = String(i + 1);
+                chip.appendChild(idx);
+                chip.appendChild(document.createTextNode(planWaypoints[i]));
+                const here = i;
+                chip.addEventListener('click', () => {
+                    if (planActive) return;
+                    planWaypoints.splice(here, 1);
+                    refreshPlanUI();
+                });
+                container.appendChild(chip);
+            }
+            const clearBtn = document.getElementById('btn-plan-clear');
+            clearBtn.disabled = planActive || planWaypoints.length === 0;
+        }
+
+        function refreshPlanUI() {
+            renderPlanWaypoints();
+            updateNodeVisuals();
+            const renderBtn = document.getElementById('btn-plan-render');
+            if (renderBtn) renderBtn.disabled = planActive || planWaypoints.length < 1;
+        }
+
+        // ── Arc-length sampling along a polyline ───────────────────────────
+        function arcLengthSample(positions, spacing) {
+            if (positions.length < 2) return [];
+            // Compute cumulative arc length
+            const cum = [0];
+            for (let i = 1; i < positions.length; i++) {
+                const dx = positions[i].x - positions[i-1].x;
+                const dy = positions[i].y - positions[i-1].y;
+                const dz = positions[i].z - positions[i-1].z;
+                cum.push(cum[i-1] + Math.sqrt(dx*dx + dy*dy + dz*dz));
+            }
+            const total = cum[cum.length - 1];
+            if (total < 1e-6) return [];
+
+            const samples = [];
+            let seg = 0;
+            const nSteps = Math.max(1, Math.floor(total / spacing));
+            for (let k = 0; k <= nSteps; k++) {
+                const s = Math.min(k * spacing, total);
+                while (seg < cum.length - 2 && cum[seg+1] < s) seg++;
+                const segLen = cum[seg+1] - cum[seg];
+                const t = segLen > 1e-9 ? (s - cum[seg]) / segLen : 0;
+                const a = positions[seg], b = positions[seg+1];
+                const pos = {
+                    x: a.x + (b.x - a.x) * t,
+                    y: a.y + (b.y - a.y) * t,
+                    z: a.z + (b.z - a.z) * t,
+                };
+                const dx = b.x - a.x, dz = b.z - a.z;
+                const yaw = Math.atan2(-dx, -dz);
+                samples.push({ pos, yaw, arcLen: s });
+            }
+            return samples;
+        }
+
+        // Potree's HQSplatRenderer pre-allocates fixed-size GPU buffers at
+        // boot; pushing pointBudget beyond ~12M crashes it ("offset is out
+        // of bounds" inside renderOctree). The real quality dial for static
+        // captures is therefore stableFrames + maxMs — letting the LOD
+        // stream finish at a moderate budget — rather than raising the cap.
+        const QUALITY_PRESETS = {
+            standard: { pointBudget: 3_000_000,  minSize: 2, maxMs: 3000,  stableFrames: 5 },
+            high:     { pointBudget: 8_000_000,  minSize: 2, maxMs: 10000, stableFrames: 10 },
+            ultra:    { pointBudget: 12_000_000, minSize: 1, maxMs: 25000, stableFrames: 20 },
+        };
+
+        async function renderPlanFrames() {
+            if (planActive) return;
+            const name = (document.getElementById('render-name').value || '').trim();
+            const spacing = parseFloat(document.getElementById('render-spacing').value);
+            const quality = document.getElementById('render-quality').value;
+            const progress = document.getElementById('render-progress');
+
+            if (!name) { alert('Pick a render name'); return; }
+            if (!(spacing > 0)) { alert('Spacing must be > 0'); return; }
+            if (planWaypoints.length < 1) { alert('Add waypoints first'); return; }
+            if (!potreeReady) { alert('Potree not ready yet'); return; }
+
+            // Build the chained path from server (always include current robot
+            // node as the leg origin so the route starts where the robot is).
+            const wpFull = [robotCurrentNode, ...planWaypoints].filter(Boolean);
+            const wp = [];
+            for (const n of wpFull) if (wp.length === 0 || wp[wp.length-1] !== n) wp.push(n);
+            if (wp.length < 2) { alert('Plan needs ≥1 waypoint distinct from current node'); return; }
+
+            const resp = await fetch('/api/plan/path', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ waypoints: wp }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                alert('Path failed: ' + (err.error || resp.status));
+                return;
+            }
+            const { path } = await resp.json();
+            const positions = path.map(n => ({ x: n.position[0], y: n.position[1], z: n.position[2] }));
+            const samples = arcLengthSample(positions, spacing);
+            if (samples.length === 0) { alert('Path too short'); return; }
+
+            // Boost Potree quality, remember previous so we can restore.
+            const preset = QUALITY_PRESETS[quality] || QUALITY_PRESETS.high;
+            postToPotree({ type: 'quality', pointBudget: preset.pointBudget, minSize: preset.minSize });
+            // Brief settle after quality bump.
+            await new Promise(r => setTimeout(r, 500));
+
+            // Per-run directory: <name>__<quality>__<YYYYMMDD-HHMMSS>
+            const ts = (() => {
+                const d = new Date();
+                const p = (n) => String(n).padStart(2, '0');
+                return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-` +
+                       `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+            })();
+            const runName = `${name}__${quality}__${ts}`;
+
+            planActive = true;
+            robotMoving = false;
+            refreshPlanUI();
+            const t0 = performance.now();
+            try {
+                for (let i = 0; i < samples.length; i++) {
+                    const s = samples[i];
+                    // Drive parent's robot pose so existing sendPotreePose forwards it.
+                    robotPosition.set(s.pos.x, s.pos.y, s.pos.z);
+                    robotYaw = s.yaw;
+                    robotPitch = 0;
+                    updateRobotMarker();
+                    updateRobotCamera();
+
+                    // The iframe waits for Potree's LOD stream to settle
+                    // before reading the canvas; we just give it a small
+                    // head-start so it sees the new visible-node set.
+                    await new Promise(r => setTimeout(r, 80));
+
+                    let dataUrl, captureStats = null, capIntrinsics = null;
+                    try {
+                        const cap = await captureFromPotree({
+                            maxMs: preset.maxMs,
+                            stableFrames: preset.stableFrames,
+                            parentTimeoutMs: preset.maxMs + 8000,
+                        });
+                        dataUrl = cap.dataUrl;
+                        captureStats = cap.stats || null;
+                        capIntrinsics = cap.intrinsics || null;
+                    } catch (e) {
+                        console.error('capture failed at sample', i, e);
+                        progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
+                        continue;
+                    }
+
+                    // Eye is +1m above the robot (see sendPotreePose);
+                    // target derives from yaw with pitch=0.
+                    const eyeX = s.pos.x, eyeY = s.pos.y + 1.0, eyeZ = s.pos.z;
+                    const fx = -Math.sin(s.yaw), fy = 0, fz = -Math.cos(s.yaw);
+                    const pose = {
+                        position: [eyeX, eyeY, eyeZ],
+                        target: [eyeX + fx, eyeY + fy, eyeZ + fz],
+                        yaw: s.yaw,
+                        pitch: 0,
+                        arc_length: s.arcLen,
+                        quality,
+                        intrinsics: capIntrinsics,
+                    };
+                    const r = await fetch('/api/render_frame', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ name: runName, index: i, png_b64: dataUrl, pose }),
+                    });
+                    if (!r.ok) {
+                        const err = await r.json().catch(() => ({}));
+                        progress.textContent = `frame ${i+1}: save failed (${err.error || r.status})`;
+                        break;
+                    }
+                    const t = captureStats
+                        ? `${captureStats.elapsedMs}ms ${(captureStats.lru/1e6).toFixed(1)}M pts`
+                        : '';
+                    progress.textContent = `frame ${i+1}/${samples.length}  s=${s.arcLen.toFixed(1)}m  ${t}`;
+                }
+                const dt = ((performance.now() - t0) / 1000).toFixed(1);
+                progress.textContent = `done: ${samples.length} frames in ${dt}s → renders/${runName}/`;
+            } finally {
+                planActive = false;
+                refreshPlanUI();
+                // Restore default quality (matches potree-view.html boot).
+                postToPotree({ type: 'quality', pointBudget: 8_000_000, minSize: 2 });
+                // The render started from `robotCurrentNode` and walked the
+                // chain; restore the marker to that origin so the live view
+                // doesn't appear to have teleported.
+                const origin = graphNodes.find(n => n.id === robotCurrentNode);
+                if (origin) {
+                    robotPosition.set(origin.position[0], origin.position[1], origin.position[2]);
+                    robotYaw = 0;
+                    updateRobotMarker();
+                    updateRobotCamera();
+                }
+            }
+        }
+
+        // ── Orbit render ────────────────────────────────────────────────
+        // An "orbit" is a circular flight path around a tip point: at angle
+        // θ the camera sits at tip + (r·cosθ, h, r·sinθ) and looks at the
+        // tip, with r = d·cos(elev) and h = d·sin(elev). Positive elev
+        // puts the camera above the tip (cone opens downward); negative
+        // puts it below (cone opens upward).
+
+        const orbitPreviewGroup = new THREE.Group();
+        orbitScene.add(orbitPreviewGroup);
+        let orbitActive = false;
+        let orbitStartThetaDeg = 0;       // angle of the render start point on the circle
+        let draggingStartHandle = false;  // mouse-drag state for the start marker
+        let orbitStartHandleMesh = null;  // currently rendered start-handle sphere
+
+        // Materials/geometries reused across preview rebuilds.
+        const orbitStartHandleGeometry = new THREE.SphereGeometry(0.18, 16, 12);
+        const orbitStartHandleMaterial = new THREE.MeshBasicMaterial({ color: 0xff8c00 });
+
+        function readOrbitParams() {
+            const r = parseFloat(document.getElementById('orbit-radius').value);
+            const h = parseFloat(document.getElementById('orbit-height').value);
+            const n = parseInt(document.getElementById('orbit-samples').value, 10);
+            if (!(r > 0) || !Number.isFinite(h) || !(n >= 3)) return null;
+            const d = Math.hypot(r, h);
+            const elevDeg = Math.atan2(h, r) * 180 / Math.PI;
+            return { d, elevDeg, n, r, h };
+        }
+
+        function orbitTipFor(node) {
+            // Tip = the node sphere itself (post-base + NODE_HEIGHT lift).
+            return [node.position[0], node.position[1] + NODE_HEIGHT, node.position[2]];
+        }
+
+        function orbitCameraAt(tip, p, theta) {
+            return [
+                tip[0] + p.r * Math.cos(theta),
+                tip[1] + p.h,
+                tip[2] + p.r * Math.sin(theta),
+            ];
+        }
+
+        function updateOrbitPreview() {
+            if (!document.getElementById('orbit-controls')) return;
+            // Tear down old preview; dispose only geometries we created
+            // here (materials are shared singletons, must not dispose).
+            while (orbitPreviewGroup.children.length) {
+                const c = orbitPreviewGroup.children[0];
+                orbitPreviewGroup.remove(c);
+                if (c.geometry && c !== orbitStartHandleMesh) c.geometry.dispose();
+            }
+            orbitStartHandleMesh = null;
+
+            const panel = document.getElementById('orbit-controls');
+            const renderStrip = document.getElementById('orbit-render-controls');
+            const renderBtn = document.getElementById('btn-orbit-render');
+
+            // Tip node = first node when in orbit mode (the only one).
+            const tipNode = orbitMode ? graphNodes[0] : null;
+            // Edit panel: only when actively editing the orbit definition.
+            // Render strip: any time an orbit is loaded, including outside
+            // edit mode, so playback works from interactive/plan flows.
+            const showEditPanel = !!(editMode && orbitMode && tipNode);
+            const showRenderStrip = !!(orbitMode && tipNode);
+            panel.hidden = !showEditPanel;
+            renderStrip.hidden = !showRenderStrip;
+            renderBtn.disabled = !(showRenderStrip && potreeReady && !orbitActive);
+            if (!orbitMode || !tipNode) return;
+
+            const p = readOrbitParams();
+            if (!p) return;
+
+            const tip = orbitTipFor(tipNode);
+            // Flight-path circle.
+            const segs = 96;
+            const pts = [];
+            for (let i = 0; i <= segs; i++) {
+                const t = (i / segs) * Math.PI * 2;
+                const c = orbitCameraAt(tip, p, t);
+                pts.push(new THREE.Vector3(c[0], c[1], c[2]));
+            }
+            orbitPreviewGroup.add(new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(pts),
+                new THREE.LineBasicMaterial({ color: 0x00d4d4 })
+            ));
+            // Axis: tip → orbit-circle center.
+            const axisLine = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(tip[0], tip[1], tip[2]),
+                    new THREE.Vector3(tip[0], tip[1] + p.h, tip[2]),
+                ]),
+                new THREE.LineDashedMaterial({ color: 0x008888, dashSize: 0.2, gapSize: 0.15 })
+            );
+            axisLine.computeLineDistances();
+            orbitPreviewGroup.add(axisLine);
+            // Start-point hint: tip → start camera position.
+            const theta0 = orbitStartThetaDeg * Math.PI / 180;
+            const camStart = orbitCameraAt(tip, p, theta0);
+            orbitPreviewGroup.add(new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(tip[0], tip[1], tip[2]),
+                    new THREE.Vector3(camStart[0], camStart[1], camStart[2]),
+                ]),
+                new THREE.LineBasicMaterial({ color: 0xff8c00 })
+            ));
+            // Draggable start handle (orange sphere on the circle).
+            const handle = new THREE.Mesh(orbitStartHandleGeometry, orbitStartHandleMaterial);
+            handle.position.set(camStart[0], camStart[1], camStart[2]);
+            handle.userData.orbitStartHandle = true;
+            orbitPreviewGroup.add(handle);
+            orbitStartHandleMesh = handle;
+        }
+
+        function sendOrbitPose(camPos, tipPos) {
+            // Bypass robot's +1 offset by posting position+target directly.
+            const r = ORIENTATION_PRESETS[orientationIndex].rot;
+            postToPotree({
+                type: 'pose',
+                position: camPos,
+                target: tipPos,
+                fov: 60, near: 0.1, far: 500,
+                orientationEuler: r,
+            });
+        }
+
+        async function renderOrbitFrames() {
+            if (orbitActive) return;
+            const node = orbitMode ? graphNodes[0] : graphNodes.find(n => n.id === selectedNodeId);
+            if (!node) { alert('No tip node — place one first'); return; }
+            const p = readOrbitParams();
+            if (!p) { alert('Bad orbit params'); return; }
+            if (!potreeReady) { alert('Potree not ready'); return; }
+            const name = (document.getElementById('orbit-name').value || '').trim();
+            if (!name) { alert('Pick an orbit name'); return; }
+            const quality = document.getElementById('orbit-quality').value;
+            const progress = document.getElementById('orbit-progress');
+
+            const preset = QUALITY_PRESETS[quality] || QUALITY_PRESETS.high;
+            // Optional UI override of the preset's stable-frames count.
+            // Blank/invalid input falls back to the preset default.
+            const stableOverride = parseInt(
+                document.getElementById('orbit-stable').value, 10
+            );
+            const stableFrames = (stableOverride > 0)
+                ? stableOverride : preset.stableFrames;
+            postToPotree({ type: 'quality', pointBudget: preset.pointBudget, minSize: preset.minSize });
+            await new Promise(r => setTimeout(r, 500));
+
+            const tip = orbitTipFor(node);
+            const ts = (() => {
+                const d = new Date(); const z = (n) => String(n).padStart(2, '0');
+                return `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
+            })();
+            const runName = `${name}__orbit__${quality}__${ts}`;
+
+            orbitActive = true;
+            updateOrbitPreview();
+            const t0 = performance.now();
+            try {
+                const theta0 = orbitStartThetaDeg * Math.PI / 180;
+                for (let i = 0; i < p.n; i++) {
+                    const theta = theta0 + (i / p.n) * Math.PI * 2;
+                    const cam = orbitCameraAt(tip, p, theta);
+                    sendOrbitPose(cam, tip);
+                    await new Promise(r => setTimeout(r, 80));
+
+                    let dataUrl, captureStats = null, capIntrinsics = null;
+                    try {
+                        const cap = await captureFromPotree({
+                            maxMs: preset.maxMs,
+                            stableFrames,
+                            parentTimeoutMs: preset.maxMs + 8000,
+                        });
+                        dataUrl = cap.dataUrl;
+                        captureStats = cap.stats || null;
+                        capIntrinsics = cap.intrinsics || null;
+                    } catch (e) {
+                        console.error('orbit capture failed at sample', i, e);
+                        progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
+                        continue;
+                    }
+
+                    const pose = {
+                        position: cam,
+                        target: tip,
+                        theta_deg: ((theta * 180 / Math.PI) % 360 + 360) % 360,
+                        start_theta_deg: orbitStartThetaDeg,
+                        radius_m: p.r,
+                        height_m: p.h,
+                        node_id: node.id,
+                        quality,
+                        intrinsics: capIntrinsics,
+                    };
+                    const r = await fetch('/api/render_frame', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ name: runName, index: i, png_b64: dataUrl, pose }),
+                    });
+                    if (!r.ok) {
+                        const err = await r.json().catch(() => ({}));
+                        progress.textContent = `frame ${i+1}: save failed (${err.error || r.status})`;
+                        break;
+                    }
+                    const t = captureStats
+                        ? `${captureStats.elapsedMs}ms ${(captureStats.lru/1e6).toFixed(1)}M pts`
+                        : '';
+                    progress.textContent = `frame ${i+1}/${p.n}  θ=${(theta*180/Math.PI).toFixed(0)}°  ${t}`;
+                }
+                const dt = ((performance.now() - t0) / 1000).toFixed(1);
+                progress.textContent = `done: ${p.n} frames in ${dt}s → renders/${runName}/`;
+            } finally {
+                orbitActive = false;
+                updateOrbitPreview();
+                postToPotree({ type: 'quality', pointBudget: 8_000_000, minSize: 2 });
+                // Restore the live robot pose so the iframe doesn't stay
+                // stuck at the last orbit sample.
+                if (typeof updateRobotCamera === 'function') updateRobotCamera();
+            }
+        }
+
+        // Refresh preview when inputs change.
+        ['orbit-radius', 'orbit-height', 'orbit-samples'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateOrbitPreview);
+        });
+        document.getElementById('btn-orbit-render').addEventListener('click', renderOrbitFrames);
+
+        function addPlanWaypoint(nodeId) {
+            if (planActive) return;
+            if (planWaypoints.length > 0 && planWaypoints[planWaypoints.length - 1] === nodeId) {
+                return;
+            }
+            planWaypoints.push(nodeId);
+            refreshPlanUI();
+        }
+
+        function clearPlan() {
+            if (planActive) return;
+            planWaypoints = [];
+            refreshPlanUI();
+        }
+
+        function startPlan() {
+            if (planActive || planWaypoints.length < 1) return;
+            const seq = [robotCurrentNode, ...planWaypoints].filter(n => n);
+            const waypoints = [];
+            for (const n of seq) {
+                if (waypoints.length === 0 || waypoints[waypoints.length - 1] !== n) {
+                    waypoints.push(n);
+                }
+            }
+            if (waypoints.length < 2) {
+                console.warn('Plan needs at least one waypoint different from current node');
+                return;
+            }
+            planActive = true;
+            currentTargetNodeId = planWaypoints[planWaypoints.length - 1];
+            document.getElementById('target-name').textContent = currentTargetNodeId;
+            updateNodeVisuals();
+            socket.emit('plan_command', { waypoints });
+            renderPlanWaypoints();
+        }
+
+        async function runHeadlessPlan() {
+            // Wait for graph to be populated
+            const deadline = performance.now() + 30000;
+            while (graphNodes.length === 0 && performance.now() < deadline) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+            if (graphNodes.length === 0) {
+                console.error('[headless] no graph loaded');
+                return;
+            }
+            // Validate plan node IDs
+            const known = new Set(graphNodes.map(n => n.id));
+            const missing = HEADLESS_PLAN.filter(id => !known.has(id));
+            if (missing.length) {
+                console.error('[headless] unknown nodes in plan:', missing);
+                return;
+            }
+
+            robotSpeed = HEADLESS_SPEED;
+            document.getElementById('speed-slider').value = String(HEADLESS_SPEED);
+            document.getElementById('speed-value').textContent = HEADLESS_SPEED.toFixed(1);
+
+            // Set plan mode and load waypoints BEFORE pressing Start so the
+            // Start handler auto-fires startPlan().
+            setRouteMode('plan');
+            planWaypoints = HEADLESS_PLAN.slice();
+            refreshPlanUI();
+
+            // Wait for Potree to be loaded if requested
+            if (HEADLESS_VIEW === 'potree') {
+                const potDeadline = performance.now() + 60000;
+                while (!potreeReady && performance.now() < potDeadline) {
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                await new Promise(r => setTimeout(r, 1500));
+            }
+
+            window.__headlessReady = true;
+            // Start enters live mode and (because plan has waypoints) drives it.
+            document.getElementById('btn-start-stop').click();
+        }
+
+        // ========================================================================
         // GRAPH API
         // ========================================================================
 
@@ -1618,6 +2658,7 @@
                     graphNodes = data.nodes || [];
                     graphEdges = data.edges || [];
                     startNodeId = data.start_node || null;
+                    applyOrbitFromServer(data.orbit);
                     renderGraph();
 
                     // Snap robot to start node (or first node)
@@ -1663,6 +2704,41 @@
             }
         }
 
+        function applyOrbitFromServer(orbit) {
+            // Mirror server-side orbit state into the UI. Called on every
+            // graph fetch so loading a saved orbit graph restores the
+            // panel inputs, sub-mode, and start angle.
+            if (orbit && typeof orbit === 'object') {
+                orbitMode = true;
+                document.getElementById('orbit-radius').value = orbit.radius;
+                document.getElementById('orbit-height').value = orbit.height;
+                document.getElementById('orbit-samples').value = orbit.samples;
+                orbitStartThetaDeg = Number(orbit.start_theta_deg) || 0;
+                if (orbit.tip_node_id) selectedNodeId = orbit.tip_node_id;
+            } else {
+                orbitMode = false;
+                orbitStartThetaDeg = 0;
+            }
+            applyEditSubmodeUI();
+            updateModeIndicator(editMode ? editModeIndicator() : 'Navigate: orbit view');
+        }
+
+        function buildOrbitPayload() {
+            // Returns the orbit definition to persist with the current graph,
+            // or null if there's nothing meaningful to save (waypoint mode,
+            // or orbit mode with no tip yet).
+            if (!orbitMode || graphNodes.length === 0) return null;
+            const p = readOrbitParams();
+            if (!p) return null;
+            return {
+                tip_node_id: graphNodes[0].id,
+                radius: p.r,
+                height: p.h,
+                samples: p.n,
+                start_theta_deg: orbitStartThetaDeg,
+            };
+        }
+
         async function saveGraph() {
             const name = prompt('Graph name:', 'default');
             if (!name) return;
@@ -1671,7 +2747,7 @@
                 const response = await fetch('/api/graph/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name })
+                    body: JSON.stringify({ name: name, orbit: buildOrbitPayload() })
                 });
 
                 if (response.ok) {
@@ -1709,10 +2785,12 @@
 
         // Edit mode toggle
         const btnEditMode = document.getElementById('btn-edit-mode');
+        const editOnlyControls = document.getElementById('edit-only-controls');
         btnEditMode.addEventListener('click', () => {
             if (liveMode) return;  // can't edit while live
             editMode = !editMode;
             btnEditMode.classList.toggle('active', editMode);
+            editOnlyControls.hidden = !editMode;
 
             // Hide robot during editing, show when navigating
             robotGroup.visible = !editMode;
@@ -1725,10 +2803,113 @@
                 updateNodeVisuals();
             }
 
-            updateModeIndicator(editMode
-                ? 'Edit: dbl-click add, drag move, Del remove, right-click set start'
-                : 'Navigate: orbit view'
-            );
+            applyEditSubmodeUI();
+            updateModeIndicator(editMode ? editModeIndicator() : 'Navigate: orbit view');
+        });
+
+        // ── Edit sub-mode: Waypoints vs Orbit ──────────────────────────
+        const btnModeWaypoints = document.getElementById('btn-mode-waypoints');
+        const btnModeOrbit = document.getElementById('btn-mode-orbit');
+
+        function editModeIndicator() {
+            return orbitMode
+                ? 'Orbit edit: dbl-click sets/moves the tip, Ctrl+drag lifts it'
+                : 'Edit: dbl-click add, drag move, Ctrl+drag lift, Del remove, right-click set start';
+        }
+
+        function applyEditSubmodeUI() {
+            btnModeWaypoints.classList.toggle('active', !orbitMode);
+            btnModeOrbit.classList.toggle('active', orbitMode);
+            // Hide waypoint-only actions in orbit mode (1 node, 0 edges).
+            const wpOnly = ['btn-add-edge', 'btn-set-start'];
+            for (const id of wpOnly) {
+                document.getElementById(id).style.display = orbitMode ? 'none' : '';
+            }
+            // Bottom controls bar: Start, the Interactive|Plan toggle, and
+            // the plan render strip have no meaning in orbit mode (no
+            // waypoints to navigate). Hide them so the orbit render strip
+            // is the only render UI on screen.
+            const wpBottom = ['btn-start-stop', 'route-mode-group', 'plan-controls'];
+            for (const id of wpBottom) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (orbitMode) {
+                    el.style.display = 'none';
+                } else {
+                    el.style.display = '';
+                    // plan-controls also needs its own hidden flag honored.
+                    if (id === 'plan-controls' && typeof routeMode !== 'undefined') {
+                        el.hidden = (routeMode !== 'plan');
+                    }
+                }
+            }
+        }
+
+        async function enterOrbitMode() {
+            if (orbitMode) return;
+            // Orbit mode keeps a single tip + zero edges. If the current
+            // graph has more than that, ask before destroying nodes/edges.
+            const extraNodes = Math.max(0, graphNodes.length - 1);
+            const extraEdges = graphEdges.length;
+            if (extraNodes > 0 || extraEdges > 0) {
+                const ok = confirm(
+                    `Orbit mode allows only 1 node and 0 edges.\n` +
+                    `Drop ${extraNodes} node(s) and ${extraEdges} edge(s)?`
+                );
+                if (!ok) return;
+                // Delete everything but the first node. The server's
+                // remove_node also drops its incident edges, so we
+                // delete extra nodes first, then any remaining edges.
+                const keep = graphNodes[0];
+                const drops = graphNodes.slice(1);
+                for (const n of drops) {
+                    try {
+                        await fetch('/api/graph/node/' + encodeURIComponent(n.id), { method: 'DELETE' });
+                    } catch (e) { console.error('drop node failed:', e); }
+                }
+                graphNodes = keep ? [keep] : [];
+                // Drop any edges that survived (e.g. between the kept node
+                // and itself, or that the server didn't auto-remove).
+                for (const ed of graphEdges) {
+                    try {
+                        await fetch('/api/graph/edge', {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ from: ed.from, to: ed.to }),
+                        });
+                    } catch (e) { console.error('drop edge failed:', e); }
+                }
+                graphEdges = [];
+            }
+            orbitMode = true;
+            // Cancel any in-flight connect-mode pickers.
+            connectMode = false;
+            firstSelectedNode = null;
+            document.getElementById('btn-add-edge').classList.remove('active');
+            // Auto-select the single tip so the orbit panel shows.
+            selectedNodeId = graphNodes[0]?.id || null;
+            applyEditSubmodeUI();
+            updateModeIndicator(editModeIndicator());
+            renderGraph();
+        }
+
+        function exitOrbitMode() {
+            if (!orbitMode) return;
+            orbitMode = false;
+            applyEditSubmodeUI();
+            updateModeIndicator(editModeIndicator());
+            // updateOrbitPreview hides the panel because orbitMode-aware
+            // logic in renderGraph isn't required, but selection may stay.
+            renderGraph();
+        }
+
+        btnModeWaypoints.addEventListener('click', () => {
+            if (!editMode) return;
+            exitOrbitMode();
+        });
+        btnModeOrbit.addEventListener('click', () => {
+            if (!editMode) return;
+            enterOrbitMode();
         });
 
         // Connect mode
@@ -1737,6 +2918,7 @@
             if (!editMode) {
                 editMode = true;
                 btnEditMode.classList.add('active');
+                editOnlyControls.hidden = false;
             }
 
             connectMode = !connectMode;
@@ -1746,8 +2928,8 @@
             updateNodeVisuals();
 
             updateModeIndicator(connectMode
-                ? 'Connect mode: click first node, then second node'
-                : 'Edit: dbl-click add, drag move, Del remove, right-click set start'
+                ? 'Connect: click first node to link, or click an edge to delete it'
+                : 'Edit: dbl-click add, drag move, Ctrl+drag lift, Del remove, right-click set start'
             );
         });
 
@@ -1817,27 +2999,33 @@
             }
         });
 
-        // Camera view toggle
-        const btnView3D = document.getElementById('btn-view-3d');
+        // Camera view toggle. The legacy 3D View has been removed; Potree is
+        // the default. YOLO remains as a passive overlay toggle.
         const btnViewYolo = document.getElementById('btn-view-yolo');
+        const btnViewPotree = document.getElementById('btn-view-potree');
         const annotatedImage = document.getElementById('annotated-image');
         const robotCanvas = robotRenderer.domElement;
 
-        btnView3D.addEventListener('click', () => {
-            showYoloView = false;
-            btnView3D.classList.add('active');
-            btnViewYolo.classList.remove('active');
-            robotCanvas.style.display = 'block';
-            annotatedImage.style.display = 'none';
-        });
-
-        btnViewYolo.addEventListener('click', () => {
-            showYoloView = true;
-            btnViewYolo.classList.add('active');
-            btnView3D.classList.remove('active');
+        function setView(mode) {
+            // mode ∈ {'potree', 'yolo'}
+            showYoloView   = (mode === 'yolo');
+            potreeViewActive = (mode === 'potree');
+            btnViewPotree.classList.toggle('active', mode === 'potree');
+            btnViewYolo.classList.toggle('active',   mode === 'yolo');
+            // The 3D robot canvas is no longer surfaced; keep it hidden so it
+            // can still drive offscreen YOLO captures without painting.
             robotCanvas.style.display = 'none';
-            annotatedImage.style.display = 'block';
-        });
+            potreeFrame.style.visibility    = (mode === 'potree') ? 'visible' : 'hidden';
+            potreeFrame.style.pointerEvents = (mode === 'potree') ? 'auto'    : 'none';
+            annotatedImage.style.display = (mode === 'yolo') ? 'block' : 'none';
+            if (potreeViewActive) sendPotreePose();
+        }
+
+        btnViewPotree.addEventListener('click', () => setView('potree'));
+        btnViewYolo.addEventListener('click',   () => setView('yolo'));
+
+        // Default to Potree on load.
+        setView('potree');
 
         // Start/Stop button — toggles live mode
         const btnStartStop = document.getElementById('btn-start-stop');
@@ -1854,6 +3042,7 @@
                 if (editMode) {
                     editMode = false;
                     btnEditMode.classList.remove('active');
+                    editOnlyControls.hidden = true;
                     connectMode = false;
                     document.getElementById('btn-add-edge').classList.remove('active');
                 }
@@ -1877,7 +3066,12 @@
                 robotGroup.visible = true;
                 fpsResultCount = 0;
                 fpsLastReset = performance.now();
-                updateModeIndicator('Live: click a waypoint to navigate');
+                setRouteMode(routeMode);
+
+                // Plan mode: drive the user-built plan immediately.
+                if (routeMode === 'plan' && planWaypoints.length > 0) {
+                    startPlan();
+                }
             } else {
                 // Exit live mode
                 btnStartStop.textContent = 'Start';
@@ -1886,10 +3080,40 @@
                 clearPathHighlight();
                 currentTargetNodeId = null;
                 document.getElementById('target-name').textContent = 'None';
+                planActive = false;
                 updateNodeVisuals();
-                updateModeIndicator('Navigate: orbit view');
+                updateModeIndicator(routeMode === 'plan'
+                    ? 'Plan: click nodes in order, press Start'
+                    : 'Navigate: orbit view');
             }
         });
+
+        // Route-mode toggle (Interactive / Plan) inside live mode
+        const btnModeInteractive = document.getElementById('btn-mode-interactive');
+        const btnModePlan = document.getElementById('btn-mode-plan');
+        const planControls = document.getElementById('plan-controls');
+        const routeModeGroup = document.getElementById('route-mode-group');
+
+        function setRouteMode(mode) {
+            routeMode = mode;
+            btnModeInteractive.classList.toggle('active', mode === 'interactive');
+            btnModePlan.classList.toggle('active', mode === 'plan');
+            planControls.hidden = (mode !== 'plan');
+            if (mode === 'plan') {
+                renderPlanWaypoints();
+                updateModeIndicator(liveMode
+                    ? 'Plan: driving plan…'
+                    : 'Plan: click nodes in order, press Start');
+            } else {
+                updateModeIndicator(liveMode
+                    ? 'Live: click a waypoint to navigate'
+                    : 'Navigate: orbit view');
+            }
+        }
+        btnModeInteractive.addEventListener('click', () => setRouteMode('interactive'));
+        btnModePlan.addEventListener('click', () => setRouteMode('plan'));
+        document.getElementById('btn-plan-clear').addEventListener('click', clearPlan);
+        document.getElementById('btn-plan-render').addEventListener('click', renderPlanFrames);
 
         // Speed slider
         const speedSlider = document.getElementById('speed-slider');
