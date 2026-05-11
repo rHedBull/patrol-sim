@@ -312,13 +312,24 @@
                         // One more rAF to ensure the latest update flushed.
                         requestAnimationFrame(() => {
                             let dataUrl = null, error = null;
+                            let intrinsics = null;
                             try {
-                                dataUrl = viewer.renderer.domElement.toDataURL('image/png');
+                                const canvas = viewer.renderer.domElement;
+                                dataUrl = canvas.toDataURL('image/png');
+                                const cam = viewer.scene.cameraP;
+                                intrinsics = {
+                                    fov_deg: cam.fov,
+                                    aspect: cam.aspect,
+                                    near: cam.near,
+                                    far: cam.far,
+                                    width: canvas.width,
+                                    height: canvas.height,
+                                };
                             } catch (e) {
                                 error = String(e);
                             }
                             parent.postMessage({
-                                type: 'capture_result', id, dataUrl, error,
+                                type: 'capture_result', id, dataUrl, error, intrinsics,
                                 stats: { visible: vis, lru, elapsedMs: Math.round(elapsed) },
                             }, '*');
                         });
