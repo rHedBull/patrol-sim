@@ -44,6 +44,16 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 nav_graph = NavGraph()
 robot: Robot | None = None
 vision: GroundingDINOProcessor | None = None
+# Orbit definition tied to the *currently loaded* graph. Persisted as a
+# sidecar (`<name>.orbit.json`) next to the graph json so non-orbit
+# graphs stay zero-overhead. Schema:
+#   {tip_node_id: str, radius: float, height: float,
+#    samples: int, start_theta_deg: float}
+current_orbit: dict | None = None
+
+
+def _orbit_path(name: str) -> Path:
+    return GRAPHS_DIR / f"{name}.orbit.json"
 
 
 def _reset_robot() -> None:
@@ -99,14 +109,16 @@ def serve_mesh_no_walls():
 def get_graph():
     data = nav_graph.to_dict()
     data["start_node"] = nav_graph.start_node
+    data["orbit"] = current_orbit
     return jsonify(data)
 
 
 @app.route("/api/graph", methods=["DELETE"])
 def clear_graph():
-    global nav_graph, robot
+    global nav_graph, robot, current_orbit
     nav_graph = NavGraph()
     robot = None
+    current_orbit = None
     return jsonify({"ok": True})
 
 
@@ -184,20 +196,42 @@ def delete_edge():
 
 @app.route("/api/graph/save", methods=["POST"])
 def save_graph():
+    global current_orbit
     data = request.get_json(force=True)
     name = data.get("name", "default")
     path = GRAPHS_DIR / f"{name}.json"
     nav_graph.save(path)
+    # Orbit sidecar: present in body → write + remember. Explicit null or
+    # missing → drop the sidecar so a saved waypoint graph doesn't keep
+    # stale orbit metadata around.
+    orbit = data.get("orbit", "missing")
+    sidecar = _orbit_path(name)
+    if orbit and orbit != "missing":
+        sidecar.write_text(json.dumps(orbit, indent=2))
+        current_orbit = orbit
+    else:
+        if sidecar.exists():
+            sidecar.unlink()
+        current_orbit = None
     return jsonify({"ok": True, "path": str(path)})
 
 
 @app.route("/api/graph/load/<name>", methods=["POST"])
 def load_graph(name: str):
-    global nav_graph
+    global nav_graph, current_orbit
     path = GRAPHS_DIR / f"{name}.json"
     if not path.exists():
         return jsonify({"error": f"Graph '{name}' not found"}), 404
     nav_graph = NavGraph.load(path)
+    sidecar = _orbit_path(name)
+    if sidecar.exists():
+        try:
+            current_orbit = json.loads(sidecar.read_text())
+        except Exception as e:  # noqa: BLE001 — bad sidecar shouldn't kill load
+            print(f"warn: failed to read orbit sidecar {sidecar}: {e}")
+            current_orbit = None
+    else:
+        current_orbit = None
     _reset_robot()
     return jsonify({"ok": True})
 
@@ -314,14 +348,18 @@ def save_render_frame():
 
 @app.route("/api/graph/delete/<name>", methods=["DELETE"])
 def delete_graph(name: str):
-    global nav_graph, robot
+    global nav_graph, robot, current_orbit
     path = GRAPHS_DIR / f"{name}.json"
     if not path.exists():
         return jsonify({"error": f"Graph '{name}' not found"}), 404
     path.unlink()
+    sidecar = _orbit_path(name)
+    if sidecar.exists():
+        sidecar.unlink()
     # Clear in-memory graph too
     nav_graph = NavGraph()
     robot = None
+    current_orbit = None
     return jsonify({"ok": True})
 
 
