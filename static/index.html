@@ -859,6 +859,7 @@
                 orbitScene.add(mesh);
                 collisionMesh = mesh;
                 fullMesh = mesh;
+                groundYCache.clear();  // any fallback Ys cached pre-mesh are now stale
                 window._debugMesh = mesh;
 
                 // Pick orientation: saved override → auto-detect.
@@ -943,8 +944,38 @@
         // Active path highlight lines
         let pathHighlightLines = [];
 
-        const NODE_HEIGHT = 0.5;  // how high above floor the node sphere sits
+        const NODE_HEIGHT = 0.5;  // default lift above floor for new nodes
         const EDGE_RADIUS = 0.02; // tube radius for edges
+
+        // Reusable raycaster for ground sampling — separate from the
+        // global `raycaster` so we don't trample mouse-pick state.
+        const groundRaycaster = new THREE.Raycaster();
+        const GROUND_RAY_FROM = new THREE.Vector3();
+        const GROUND_RAY_DIR = new THREE.Vector3(0, -1, 0);
+
+        // Ground-Y cache: raycasting collisionMesh (millions of tris) per
+        // node every renderGraph froze the UI during drags. Key by
+        // cm-rounded (x,z); invalidate when a node's X/Z changes.
+        const groundYCache = new Map();
+        const groundKey = (x, z) => `${Math.round(x * 100)}|${Math.round(z * 100)}`;
+
+        function getGroundYAt(x, z, fallbackY) {
+            const key = groundKey(x, z);
+            const cached = groundYCache.get(key);
+            if (cached !== undefined) return cached;
+            GROUND_RAY_FROM.set(x, 1e4, z);
+            groundRaycaster.set(GROUND_RAY_FROM, GROUND_RAY_DIR);
+            let y = fallbackY;
+            if (collisionMesh) {
+                const hits = groundRaycaster.intersectObject(collisionMesh, true);
+                if (hits.length > 0) y = hits[0].point.y;
+            } else if (typeof floorPlane !== 'undefined' && floorPlane) {
+                const fhits = groundRaycaster.intersectObject(floorPlane, false);
+                if (fhits.length > 0) y = fhits[0].point.y;
+            }
+            groundYCache.set(key, y);
+            return y;
+        }
 
         function renderGraph() {
             // Clear existing graph visuals
@@ -960,15 +991,22 @@
                 const y = node.position[1];
                 const z = node.position[2];
 
-                // Post (vertical cylinder from floor to node)
+                // Sphere (the "viewpoint") — sits NODE_HEIGHT above y by
+                // default, but Ctrl-drag lifts it freely up into the sky.
+                const sphereY = y + NODE_HEIGHT;
+
+                // Post stretches from the actual ground under (x,z) up
+                // to the sphere, so it grows/shrinks with the lift.
+                const groundY = getGroundYAt(x, z, y);
+                const postLen = Math.max(0.001, sphereY - groundY);
                 const post = new THREE.Mesh(postGeometry, postMaterial);
-                post.position.set(x, y + NODE_HEIGHT / 2, z);
-                post.scale.y = NODE_HEIGHT;
+                post.position.set(x, groundY + postLen / 2, z);
+                post.scale.y = postLen;
                 graphGroup.add(post);
 
                 // Node sphere at top of post
                 const mesh = new THREE.Mesh(nodeGeometry, nodeMaterialDefault.clone());
-                mesh.position.set(x, y + NODE_HEIGHT, z);
+                mesh.position.set(x, sphereY, z);
                 mesh.userData.nodeId = node.id;
                 graphGroup.add(mesh);
                 graphNodeMeshes[node.id] = mesh;
@@ -1512,6 +1550,7 @@
         });
 
         let mouseDownPos = null;
+        let dragStartY = null;        // node Y at drag start (for vertical drag)
         const DRAG_THRESHOLD = 5; // pixels before a click becomes a drag
 
         orbitContainer.addEventListener('mousedown', (e) => {
@@ -1523,6 +1562,8 @@
                 if (nodeId !== null) {
                     draggingNodeId = nodeId;
                     isDragging = false; // not yet, need to exceed threshold
+                    const node = graphNodes.find(n => n.id === draggingNodeId);
+                    dragStartY = node ? node.position[1] : 0;
                 }
             }
         });
@@ -1536,11 +1577,52 @@
                         isDragging = true;
                         orbitControls.enabled = false; // disable orbit while dragging
                     }
-                    // Move node to floor position under cursor
-                    const floorPos = getFloorPosition(e);
-                    if (floorPos) {
-                        const node = graphNodes.find(n => n.id === draggingNodeId);
-                        if (node) {
+                    const node = graphNodes.find(n => n.id === draggingNodeId);
+                    if (!node) return;
+
+                    if (e.ctrlKey) {
+                        // Vertical drag — lift node along the world up axis
+                        // through its ground anchor (X,Z stay fixed). We
+                        // project the cursor ray onto that vertical axis
+                        // and read the closest point's Y, so the node
+                        // tracks the cursor in world space, not screen px.
+                        getMousePosition(e, orbitContainer);
+                        raycaster.setFromCamera(mouse, orbitCamera);
+                        const ax = node.position[0];
+                        const az = node.position[2];
+                        const ro = raycaster.ray.origin;
+                        const rd = raycaster.ray.direction;
+                        // Closest-point between axis (ax, *, az), dir (0,1,0)
+                        // and the camera ray. Solve for axis parameter t:
+                        //   t = (b*e - c*d) / (a*c - b*b)
+                        // where a=1 (axisDir·axisDir), c=rd·rd, b=rd.y,
+                        // d = -(ro.y - 0), e = rd·(axisOrigin - ro).
+                        const b = rd.y;
+                        const c = rd.dot(rd);
+                        const wx = ax - ro.x, wy = -ro.y, wz = az - ro.z;
+                        const d = wy;                // axisDir·w0
+                        const e2 = rd.x * wx + rd.y * wy + rd.z * wz;
+                        const denom = c - b * b;     // a=1
+                        let newSphereY;
+                        if (Math.abs(denom) < 1e-6) {
+                            newSphereY = dragStartY + NODE_HEIGHT;
+                        } else {
+                            newSphereY = (b * e2 - c * d) / denom;
+                        }
+                        // node.position[1] is the post base; sphere renders
+                        // at position[1] + NODE_HEIGHT, so back it out so
+                        // the green sphere itself tracks the cursor.
+                        const newY = newSphereY - NODE_HEIGHT;
+                        node.position = [
+                            node.position[0],
+                            Math.round(newY * 100) / 100,
+                            node.position[2]
+                        ];
+                        renderGraph();
+                    } else {
+                        // Horizontal drag — snap to floor under cursor.
+                        const floorPos = getFloorPosition(e);
+                        if (floorPos) {
                             node.position = [
                                 Math.round(floorPos.x * 100) / 100,
                                 Math.round(floorPos.y * 100) / 100,
@@ -1566,11 +1648,13 @@
                 draggingNodeId = null;
                 isDragging = false;
                 mouseDownPos = null;
+                dragStartY = null;
                 return;
             }
 
             draggingNodeId = null;
             isDragging = false;
+            dragStartY = null;
             orbitControls.enabled = true;
 
             // Treat as click
@@ -2277,7 +2361,7 @@
             }
 
             updateModeIndicator(editMode
-                ? 'Edit: dbl-click add, drag move, Del remove, right-click set start'
+                ? 'Edit: dbl-click add, drag move, Ctrl+drag lift, Del remove, right-click set start'
                 : 'Navigate: orbit view'
             );
         });
@@ -2299,7 +2383,7 @@
 
             updateModeIndicator(connectMode
                 ? 'Connect: click first node to link, or click an edge to delete it'
-                : 'Edit: dbl-click add, drag move, Del remove, right-click set start'
+                : 'Edit: dbl-click add, drag move, Ctrl+drag lift, Del remove, right-click set start'
             );
         });
 
