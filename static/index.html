@@ -285,6 +285,34 @@
             font-size: 11px; color: #ffb74d; font-family: monospace;
             min-width: 120px;
         }
+        /* Orbit render strip in the bottom controls bar — same look as
+           the plan-controls block so they sit consistently next to each
+           other when both are visible. */
+        #orbit-render-controls {
+            display: flex; align-items: center; gap: 6px; min-height: 28px;
+        }
+        #orbit-render-controls[hidden] { display: none; }
+        #orbit-render-controls .orbit-bar-label {
+            color: #00d4d4; font-size: 11px; font-weight: 600;
+        }
+        #orbit-render-controls label.rl {
+            font-size: 11px; color: #aaa; display: inline-flex;
+            align-items: center; gap: 4px;
+        }
+        #orbit-render-controls input, #orbit-render-controls select {
+            background: rgba(255,255,255,0.06); border: 1px solid #333;
+            color: #ddd; padding: 2px 4px; border-radius: 3px;
+            font-family: monospace; font-size: 11px;
+        }
+        #orbit-render-controls button {
+            background: rgba(0,150,150,0.3); border: 1px solid #066;
+            color: #cee; padding: 4px 10px; border-radius: 3px; cursor: pointer;
+            font-size: 11px;
+        }
+        #orbit-render-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #orbit-progress {
+            font-size: 11px; color: #00d4d4; font-family: monospace; min-width: 120px;
+        }
 
         /* Orbit-render panel — sits below the graph toolbar overlay */
         #orbit-controls {
@@ -477,19 +505,10 @@
             </div>
             <div id="orbit-controls" hidden>
                 <span class="orb-label">Orbit:</span>
-                <label class="rl">name <input type="text" id="orbit-name" value="orbit01" size="9"></label>
                 <label class="rl">r <input type="number" id="orbit-radius" value="5" min="0.1" max="500" step="0.5" style="width:55px"> m</label>
                 <label class="rl">h <input type="number" id="orbit-height" value="2" min="-200" max="200" step="0.5" style="width:55px"> m</label>
                 <label class="rl">n <input type="number" id="orbit-samples" value="36" min="3" max="360" step="1" style="width:48px"></label>
-                <label class="rl">quality
-                    <select id="orbit-quality">
-                        <option value="standard">standard</option>
-                        <option value="high" selected>high</option>
-                        <option value="ultra">ultra</option>
-                    </select>
-                </label>
-                <button id="btn-orbit-render" disabled title="Render PNGs around the orbit circle">Render Orbit</button>
-                <span id="orbit-progress"></span>
+                <span style="opacity:0.6; font-size:11px">drag the orange handle to set start angle</span>
             </div>
             <div id="mode-indicator">Navigate: orbit view</div>
             <div id="node-tooltip"></div>
@@ -532,6 +551,19 @@
             <label>Route</label>
             <button id="btn-mode-interactive" class="active" title="Click a node to navigate">Interactive</button>
             <button id="btn-mode-plan" title="Build a multi-waypoint plan, then press Start">Plan</button>
+        </div>
+        <div id="orbit-render-controls" hidden>
+            <span class="orbit-bar-label">Orbit:</span>
+            <label class="rl">name <input type="text" id="orbit-name" value="orbit01" size="10"></label>
+            <label class="rl">quality
+                <select id="orbit-quality">
+                    <option value="standard">standard</option>
+                    <option value="high" selected>high</option>
+                    <option value="ultra">ultra</option>
+                </select>
+            </label>
+            <button id="btn-orbit-render" disabled title="Render PNGs around the orbit circle">Render Orbit</button>
+            <span id="orbit-progress"></span>
         </div>
         <div id="plan-controls" hidden>
             <span id="plan-waypoints" title="Waypoints in order"></span>
@@ -1417,6 +1449,12 @@
 
         function sendPotreePose() {
             if (!potreeViewActive || !potreeReady) return;
+            // While an orbit render is sweeping the camera around the tip,
+            // the per-frame robot pose would clobber every orbit pose
+            // before Potree had a chance to render it (the animation loop
+            // fires faster than the iframe re-renders), causing every
+            // captured frame to be byte-identical. Yield to the orbit.
+            if (orbitActive) return;
             // Forward vector from yaw/pitch (matches robotCamera.rotation YXZ).
             const cy = Math.cos(robotPitch), sy = Math.sin(robotPitch);
             const cx = Math.cos(robotYaw),   sx = Math.sin(robotYaw);
@@ -2347,15 +2385,19 @@
             orbitStartHandleMesh = null;
 
             const panel = document.getElementById('orbit-controls');
+            const renderStrip = document.getElementById('orbit-render-controls');
             const renderBtn = document.getElementById('btn-orbit-render');
 
             // Tip node = first node when in orbit mode (the only one).
             const tipNode = orbitMode ? graphNodes[0] : null;
-            // Panel only in edit-mode orbit-mode with a tip; preview also
-            // shows in non-edit so saved orbits stay visible.
-            const showPanel = !!(editMode && orbitMode && tipNode);
-            panel.hidden = !showPanel;
-            renderBtn.disabled = !(showPanel && potreeReady && !orbitActive);
+            // Edit panel: only when actively editing the orbit definition.
+            // Render strip: any time an orbit is loaded, including outside
+            // edit mode, so playback works from interactive/plan flows.
+            const showEditPanel = !!(editMode && orbitMode && tipNode);
+            const showRenderStrip = !!(orbitMode && tipNode);
+            panel.hidden = !showEditPanel;
+            renderStrip.hidden = !showRenderStrip;
+            renderBtn.disabled = !(showRenderStrip && potreeReady && !orbitActive);
             if (!orbitMode || !tipNode) return;
 
             const p = readOrbitParams();
