@@ -562,6 +562,9 @@
                     <option value="ultra">ultra</option>
                 </select>
             </label>
+            <label class="rl" title="Override the quality preset's stable-frames count (blank = preset default)">stable
+                <input type="number" id="orbit-stable" min="1" max="120" step="1" placeholder="auto" style="width:48px">
+            </label>
             <button id="btn-orbit-render" disabled title="Render PNGs around the orbit circle">Render Orbit</button>
             <span id="orbit-progress"></span>
         </div>
@@ -2469,6 +2472,13 @@
             const progress = document.getElementById('orbit-progress');
 
             const preset = QUALITY_PRESETS[quality] || QUALITY_PRESETS.high;
+            // Optional UI override of the preset's stable-frames count.
+            // Blank/invalid input falls back to the preset default.
+            const stableOverride = parseInt(
+                document.getElementById('orbit-stable').value, 10
+            );
+            const stableFrames = (stableOverride > 0)
+                ? stableOverride : preset.stableFrames;
             postToPotree({ type: 'quality', pointBudget: preset.pointBudget, minSize: preset.minSize });
             await new Promise(r => setTimeout(r, 500));
 
@@ -2494,7 +2504,7 @@
                     try {
                         const cap = await captureFromPotree({
                             maxMs: preset.maxMs,
-                            stableFrames: preset.stableFrames,
+                            stableFrames,
                             parentTimeoutMs: preset.maxMs + 8000,
                         });
                         dataUrl = cap.dataUrl;
@@ -2804,6 +2814,24 @@
             const wpOnly = ['btn-add-edge', 'btn-set-start'];
             for (const id of wpOnly) {
                 document.getElementById(id).style.display = orbitMode ? 'none' : '';
+            }
+            // Bottom controls bar: Start, the Interactive|Plan toggle, and
+            // the plan render strip have no meaning in orbit mode (no
+            // waypoints to navigate). Hide them so the orbit render strip
+            // is the only render UI on screen.
+            const wpBottom = ['btn-start-stop', 'route-mode-group', 'plan-controls'];
+            for (const id of wpBottom) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (orbitMode) {
+                    el.style.display = 'none';
+                } else {
+                    el.style.display = '';
+                    // plan-controls also needs its own hidden flag honored.
+                    if (id === 'plan-controls' && typeof routeMode !== 'undefined') {
+                        el.hidden = (routeMode !== 'plan');
+                    }
+                }
             }
         }
 
