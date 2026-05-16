@@ -477,6 +477,10 @@
 <body>
     <div id="header">
         Robot Patrol Simulator
+        <select id="scene-select" title="Switch scene (full-page reload)"
+                style="margin-left:14px; background:#222; color:#ddd; border:1px solid #444; padding:4px 8px; border-radius:3px; font-size:12px; max-width:380px;">
+            <option value="">-- loading scenes --</option>
+        </select>
         <div class="status-dot" id="connection-dot" title="Socket.IO disconnected"></div>
     </div>
 
@@ -641,6 +645,84 @@
         const HEADLESS_GRAPH = URL_PARAMS.get('graph') || null;
         const HEADLESS_VIEW = URL_PARAMS.get('view') || 'potree';
         const HEADLESS_SPEED = parseFloat(URL_PARAMS.get('speed') || '2.0');
+
+        // ── Active scene ─────────────────────────────────────────────────
+        // `?scene=` selects which scene under SCENES_ROOT to load. When
+        // missing the server picks the most-recently-used (or first
+        // alphabetical) — we still propagate "" so URLs stay shareable.
+        const ACTIVE_SCENE = URL_PARAMS.get('scene') || '';
+        const SCENE_QS = ACTIVE_SCENE ? `?scene=${encodeURIComponent(ACTIVE_SCENE)}` : '';
+
+        // Auto-inject ?scene= into all backend calls. Cheaper than threading
+        // it through every fetch site. Targets /api/* and /mesh.glb only —
+        // /static/* and /scenes/<name>/* already encode scope in the path.
+        // /api/scenes is excluded — it lists scenes, doesn't operate on one.
+        const _origFetch = window.fetch.bind(window);
+        if (ACTIVE_SCENE) {
+            window.fetch = (input, init) => {
+                const url = typeof input === 'string' ? input : (input?.url || '');
+                const needsScene = (url.startsWith('/api/') && !url.startsWith('/api/scenes'))
+                                   || url === '/mesh.glb' || url.startsWith('/mesh.glb?');
+                if (!needsScene || url.includes('scene=')) return _origFetch(input, init);
+                const sep = url.includes('?') ? '&' : '?';
+                const scoped = url + sep + 'scene=' + encodeURIComponent(ACTIVE_SCENE);
+                return _origFetch(typeof input === 'string' ? scoped : new Request(scoped, input), init);
+            };
+        }
+
+        // ── Scene picker ───────────────────────────────────────────────────
+        function _fmtAgo(ts) {
+            if (!ts) return null;
+            const diff = (Date.now() / 1000) - ts;
+            if (diff < 60) return 'just now';
+            if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+            return Math.round(diff / 86400) + 'd ago';
+        }
+        function _setSelectPlaceholder(sel, label) {
+            sel.replaceChildren();
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = label;
+            sel.appendChild(opt);
+        }
+        (async () => {
+            const sel = document.getElementById('scene-select');
+            if (!sel) return;
+            try {
+                const r = await _origFetch('/api/scenes');
+                const scenes = await r.json();
+                scenes.sort((a, b) => (b.last_used || 0) - (a.last_used || 0));
+                if (!scenes.length) {
+                    _setSelectPlaceholder(sel, '-- no scenes found --');
+                    return;
+                }
+                const activeName = ACTIVE_SCENE || scenes[0].name;
+                sel.replaceChildren();
+                for (const s of scenes) {
+                    const opt = document.createElement('option');
+                    opt.value = s.name;
+                    const parts = [s.name];
+                    if (s.n_triangles) parts.push((s.n_triangles / 1e6).toFixed(1) + 'M tris');
+                    const ago = _fmtAgo(s.last_used);
+                    if (ago) parts.push('last: ' + ago);
+                    if (!s.has_potree) parts.push('no potree');
+                    opt.textContent = parts.join(' · ');
+                    if (s.name === activeName) opt.selected = true;
+                    sel.appendChild(opt);
+                }
+                sel.addEventListener('change', () => {
+                    const target = sel.value;
+                    if (!target || target === ACTIVE_SCENE) return;
+                    const params = new URLSearchParams(window.location.search);
+                    params.set('scene', target);
+                    window.location.search = '?' + params.toString();
+                });
+            } catch (e) {
+                console.warn('scene list fetch failed:', e);
+                _setSelectPlaceholder(sel, '-- error loading --');
+            }
+        })();
         if (HEADLESS) {
             document.body.classList.add('headless', `view-${HEADLESS_VIEW}`);
         }
@@ -931,7 +1013,7 @@
         }
 
         gltfLoader.load(
-            '/mesh.glb',
+            '/mesh.glb' + SCENE_QS,
             async (gltf) => {
                 const mesh = gltf.scene;
                 mesh.traverse((obj) => {

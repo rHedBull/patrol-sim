@@ -23,12 +23,86 @@ from vision.grounding_dino import GroundingDINOProcessor
 # Paths
 # ---------------------------------------------------------------------------
 
-MESH_PATH: Path | None = None
-NO_WALLS_MESH_PATH: Path | None = None
+DEFAULT_SCENES_ROOT = Path("/home/hendrik/coding/engine/data/lidar/annotated")
+SCENES_ROOT: Path = DEFAULT_SCENES_ROOT
 GRAPHS_ROOT = Path(__file__).resolve().parent / "graphs"
-GRAPHS_DIR: Path = GRAPHS_ROOT  # set per-mesh in __main__
-RENDERS_ROOT = Path(__file__).resolve().parent / "renders"
-RENDERS_DIR: Path = RENDERS_ROOT  # set per-scene in __main__
+# `_legacy_pointclouds_dir` is checked as a fall-back when a scene has no
+# in-tree `potree/` dir. Lets the old `static/pointclouds/<scene>/` clouds
+# keep working for scenes we haven't rebuilt yet.
+_LEGACY_PCD_DIR = Path(__file__).resolve().parent / "static" / "pointclouds"
+
+# Per-scene optimized-mesh cache: scene_name -> served Path. Avoids re-running
+# gltfpack on every `/mesh.glb` request.
+_OPTIMIZED_CACHE: dict[str, Path] = {}
+
+
+def _scene_dir(scene: str) -> Path:
+    """Resolve `<SCENES_ROOT>/<scene>/`, rejecting traversal attempts."""
+    if not scene or "/" in scene or ".." in scene:
+        raise ValueError(f"invalid scene name: {scene!r}")
+    return SCENES_ROOT / scene
+
+
+def _list_scenes() -> list[str]:
+    """Scenes are subdirs with a `source/mesh.glb` inside."""
+    if not SCENES_ROOT.is_dir():
+        return []
+    return sorted(
+        p.name for p in SCENES_ROOT.iterdir()
+        if p.is_dir() and (p / "source" / "mesh.glb").exists()
+    )
+
+
+def _scene_from_request() -> str:
+    """Pull `?scene=` from the current Flask request.
+
+    Falls back to the most-recently-used scene (via `.last_used` mtime), then
+    to the first scene alphabetically. Raises 400 if none exist.
+    """
+    name = request.args.get("scene", "").strip()
+    if name:
+        return name
+    scenes = _list_scenes()
+    if not scenes:
+        from flask import abort
+        abort(400, "no scenes available under " + str(SCENES_ROOT))
+    # most recent last_used wins
+    def _mtime(s: str) -> float:
+        p = _scene_dir(s) / ".last_used"
+        return p.stat().st_mtime if p.exists() else -1.0
+    return max(scenes, key=_mtime)
+
+
+def _touch_last_used(scene: str) -> None:
+    p = _scene_dir(scene) / ".last_used"
+    try:
+        p.touch()
+    except Exception:
+        pass
+
+
+def _scene_mesh_served_path(scene: str) -> Path:
+    """Return the path to serve for `/mesh.glb`, optimizing on first hit."""
+    cached = _OPTIMIZED_CACHE.get(scene)
+    if cached is not None and cached.exists():
+        return cached
+    raw = _scene_dir(scene) / "source" / "mesh.glb"
+    served = _maybe_optimize(raw) if raw.exists() else raw
+    _OPTIMIZED_CACHE[scene] = served
+    return served
+
+
+def _scene_renders_dir(scene: str) -> Path:
+    d = _scene_dir(scene) / "renders"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _scene_graphs_dir(scene: str) -> Path:
+    """Graphs stay under walker/graphs/<scene>/ per design."""
+    d = GRAPHS_ROOT / scene
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -53,7 +127,7 @@ current_orbit: dict | None = None
 
 
 def _orbit_path(name: str) -> Path:
-    return GRAPHS_DIR / f"{name}.orbit.json"
+    return _scene_graphs_dir(_scene_from_request()) / f"{name}.orbit.json"
 
 
 def _reset_robot() -> None:
@@ -91,15 +165,68 @@ def _send_glb(path: Path):
 
 @app.route("/mesh.glb")
 def serve_mesh():
-    assert MESH_PATH is not None
-    return _send_glb(MESH_PATH)
+    scene = _scene_from_request()
+    served = _scene_mesh_served_path(scene)
+    if not served.exists():
+        return f"mesh.glb missing for scene {scene!r}", 404
+    return _send_glb(served)
 
 
 @app.route("/mesh_no_walls.glb")
 def serve_mesh_no_walls():
-    if NO_WALLS_MESH_PATH and NO_WALLS_MESH_PATH.exists():
-        return _send_glb(NO_WALLS_MESH_PATH)
+    # No-walls meshes aren't part of the per-scene convention; keep route for
+    # the few legacy scenes that have them via the old CLI form.
     return "No walls mesh not available", 404
+
+
+@app.route("/api/scenes", methods=["GET"])
+def list_scenes():
+    """List all scenes that have a `source/mesh.glb`.
+
+    Each entry: {name, n_triangles, build_date, has_potree, last_used}.
+    `last_used` is a unix ts (mtime of `.last_used` touchfile) or null.
+    """
+    out = []
+    for name in _list_scenes():
+        d = _scene_dir(name)
+        meta_p = d / "source" / "mesh.meta.json"
+        tris = build_date = None
+        if meta_p.exists():
+            try:
+                meta = json.loads(meta_p.read_text())
+                tris = int(meta.get("n_triangles") or 0) or None
+                build_date = meta.get("build_date")  # may be absent
+            except Exception:
+                pass
+        has_potree = (d / "potree" / "metadata.json").exists() or (
+            _LEGACY_PCD_DIR / name / "metadata.json"
+        ).exists()
+        lu_p = d / ".last_used"
+        last_used = lu_p.stat().st_mtime if lu_p.exists() else None
+        out.append({
+            "name": name,
+            "n_triangles": tris,
+            "build_date": build_date,
+            "has_potree": has_potree,
+            "last_used": last_used,
+        })
+    return jsonify(out)
+
+
+@app.route("/scenes/<scene>/potree/<path:rest>")
+def serve_scene_potree(scene: str, rest: str):
+    """Serve files under `<scenes-root>/<scene>/potree/`.
+
+    Returns 404 if the scene has no `potree/` dir. The frontend falls back to
+    `/static/pointclouds/<scene>/...` for legacy clouds.
+    """
+    try:
+        base = _scene_dir(scene) / "potree"
+    except ValueError:
+        return "invalid scene", 400
+    if not base.is_dir():
+        return "no potree for this scene", 404
+    return send_from_directory(str(base), rest)
 
 
 # ── Graph CRUD ────────────────────────────────────────────────────────────
@@ -199,7 +326,7 @@ def save_graph():
     global current_orbit
     data = request.get_json(force=True)
     name = data.get("name", "default")
-    path = GRAPHS_DIR / f"{name}.json"
+    path = _scene_graphs_dir(_scene_from_request()) / f"{name}.json"
     nav_graph.save(path)
     # Orbit sidecar: present in body → write + remember. Explicit null or
     # missing → drop the sidecar so a saved waypoint graph doesn't keep
@@ -219,7 +346,7 @@ def save_graph():
 @app.route("/api/graph/load/<name>", methods=["POST"])
 def load_graph(name: str):
     global nav_graph, current_orbit
-    path = GRAPHS_DIR / f"{name}.json"
+    path = _scene_graphs_dir(_scene_from_request()) / f"{name}.json"
     if not path.exists():
         return jsonify({"error": f"Graph '{name}' not found"}), 404
     nav_graph = NavGraph.load(path)
@@ -238,7 +365,7 @@ def load_graph(name: str):
 
 @app.route("/api/graphs", methods=["GET"])
 def list_graphs():
-    names = sorted(p.stem for p in GRAPHS_DIR.glob("*.json"))
+    names = sorted(p.stem for p in _scene_graphs_dir(_scene_from_request()).glob("*.json"))
     return jsonify(names)
 
 
@@ -246,22 +373,30 @@ def list_graphs():
 def get_scene_info():
     """Return the active scene name plus a Potree pointcloud URL if one exists.
 
-    Pointclouds are looked up at ``static/pointclouds/<scene>/metadata.json``
-    (the output of PotreeConverter v2). When absent, ``pointcloud_url`` is None
-    and the right-panel Potree view shows a placeholder.
+    Looks for the cloud at `<scene>/potree/metadata.json` first; falls back to
+    the legacy `static/pointclouds/<scene>/metadata.json` if that's missing.
+    Returns `null` for `pointcloud_url` when neither is present; the right-panel
+    Potree view shows a placeholder in that case.
+
+    Side effect: touches `<scene>/.last_used` so the dropdown can highlight the
+    most-recent scene next time.
     """
-    scene_name = GRAPHS_DIR.name
-    static_dir = Path(__file__).resolve().parent / "static"
-    pc_meta = static_dir / "pointclouds" / scene_name / "metadata.json"
-    pointcloud_url = (
-        f"/static/pointclouds/{scene_name}/metadata.json" if pc_meta.exists() else None
-    )
-    return jsonify({"scene": scene_name, "pointcloud_url": pointcloud_url})
+    scene = _scene_from_request()
+    _touch_last_used(scene)
+    in_tree = _scene_dir(scene) / "potree" / "metadata.json"
+    legacy = _LEGACY_PCD_DIR / scene / "metadata.json"
+    if in_tree.exists():
+        url = f"/scenes/{scene}/potree/metadata.json"
+    elif legacy.exists():
+        url = f"/static/pointclouds/{scene}/metadata.json"
+    else:
+        url = None
+    return jsonify({"scene": scene, "pointcloud_url": url})
 
 
 @app.route("/api/orientation", methods=["GET"])
 def get_orientation():
-    path = GRAPHS_DIR / "_orientation.json"
+    path = _scene_graphs_dir(_scene_from_request()) / "_orientation.json"
     if path.exists():
         return jsonify(json.loads(path.read_text()))
     return jsonify(None)
@@ -270,7 +405,7 @@ def get_orientation():
 @app.route("/api/orientation", methods=["PUT"])
 def put_orientation():
     data = request.get_json(force=True)
-    path = GRAPHS_DIR / "_orientation.json"
+    path = _scene_graphs_dir(_scene_from_request()) / "_orientation.json"
     path.write_text(json.dumps(data))
     return jsonify({"ok": True})
 
@@ -307,8 +442,8 @@ def plan_path():
 def save_render_frame():
     """Persist a single rendered frame coming from the in-page renderer.
 
-    Body: ``{name, index, png_b64, pose}``. Writes
-    ``renders/<scene>/<name>/frame_NNNN.png`` and appends to
+    Body: ``{name, index, png_b64, pose}``. Writes to
+    ``<scenes-root>/<scene>/renders/<name>/frame_NNNN.png`` and appends to
     ``manifest.json`` in the same directory.
     """
     data = request.get_json(force=True)
@@ -322,14 +457,15 @@ def save_render_frame():
     if not png_b64:
         return jsonify({"error": "Missing png_b64"}), 400
 
-    out_dir = RENDERS_DIR / name
+    scene = _scene_from_request()
+    out_dir = _scene_renders_dir(scene) / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     frame_path = out_dir / f"frame_{index:04d}.png"
     frame_path.write_bytes(base64.b64decode(png_b64))
 
     manifest_path = out_dir / "manifest.json"
-    manifest = {"name": name, "scene": RENDERS_DIR.name, "frames": []}
+    manifest = {"name": name, "scene": scene, "frames": []}
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
@@ -349,7 +485,7 @@ def save_render_frame():
 @app.route("/api/graph/delete/<name>", methods=["DELETE"])
 def delete_graph(name: str):
     global nav_graph, robot, current_orbit
-    path = GRAPHS_DIR / f"{name}.json"
+    path = _scene_graphs_dir(_scene_from_request()) / f"{name}.json"
     if not path.exists():
         return jsonify({"error": f"Graph '{name}' not found"}), 404
     path.unlink()
@@ -504,47 +640,32 @@ def _maybe_optimize(path: Path, *, threshold_mb: float = 50.0) -> Path:
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    if not args:
-        print("Usage: python server.py [--raw] <mesh_path> [no_walls_mesh_path]", file=sys.stderr)
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Robot patrol simulator server. Browses scenes under SCENES_ROOT.",
+    )
+    parser.add_argument(
+        "--scenes-root",
+        default=str(DEFAULT_SCENES_ROOT),
+        help=f"directory containing scene subdirs with source/mesh.glb (default: {DEFAULT_SCENES_ROOT})",
+    )
+    parser.add_argument("--port", type=int, default=5050)
+    parser.add_argument("--host", default="0.0.0.0")
+    cli = parser.parse_args()
+
+    SCENES_ROOT = Path(cli.scenes_root).resolve()
+    if not SCENES_ROOT.is_dir():
+        print(f"scenes-root not a directory: {SCENES_ROOT}", file=sys.stderr)
         sys.exit(1)
 
-    raw_mode = "--raw" in flags
-
-    raw_mesh_path = Path(args[0]).resolve()
-    if not raw_mesh_path.exists():
-        print(f"Mesh file not found: {raw_mesh_path}", file=sys.stderr)
-        sys.exit(1)
-    MESH_PATH = raw_mesh_path if raw_mode else _maybe_optimize(raw_mesh_path)
-
-    if len(args) >= 2:
-        raw_no_walls = Path(args[1]).resolve()
-        if not raw_no_walls.exists():
-            print(f"No-walls mesh not found: {raw_no_walls}", file=sys.stderr)
-            NO_WALLS_MESH_PATH = None
-        else:
-            NO_WALLS_MESH_PATH = raw_no_walls if raw_mode else _maybe_optimize(raw_no_walls)
-
-    # Namespace graphs per mesh so each scene has its own collection.
-    # Use the raw (pre-optimization) path so the cached `.optimized` suffix
-    # doesn't fragment graph storage.
-    scene_name = raw_mesh_path.stem
-    if scene_name in {"mesh", "scene"} and raw_mesh_path.parent.name == "source":
-        scene_name = raw_mesh_path.parent.parent.name
-    elif scene_name in {"mesh", "scene"}:
-        scene_name = raw_mesh_path.parent.name
-    GRAPHS_DIR = GRAPHS_ROOT / scene_name
-    GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
-    RENDERS_DIR = RENDERS_ROOT / scene_name
-    RENDERS_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Graphs dir: {GRAPHS_DIR}")
-    print(f"Renders dir: {RENDERS_DIR}")
+    scenes = _list_scenes()
+    print(f"Scenes root: {SCENES_ROOT}")
+    print(f"Scenes available ({len(scenes)}): {', '.join(scenes) if scenes else '<none>'}")
 
     # Vision disabled — frames will be passed through without detection.
     vision = None
     print("Vision processor disabled.")
 
-    print(f"Serving mesh from: {MESH_PATH}")
-    print("Open http://localhost:5000 in your browser")
-    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
+    print(f"Open http://localhost:{cli.port} in your browser")
+    socketio.run(app, host=cli.host, port=cli.port, allow_unsafe_werkzeug=True)
