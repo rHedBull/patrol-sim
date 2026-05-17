@@ -39,6 +39,21 @@ class Robot:
         self._path_index = 1
         return list(path)
 
+    def assume_path(self, path: list[str]) -> None:
+        """Adopt an externally-computed path and start driving it.
+
+        Used when a caller (e.g. the multi-leg `plan_command` WS handler)
+        has already chained A* legs together and just wants the robot to
+        follow the result. `current_node` snaps to `path[0]` and movement
+        starts at `path[1]`. Position is NOT teleported — `step()` will
+        animate from wherever the robot currently is toward `path[1]`.
+        """
+        if not path:
+            raise ValueError("assume_path requires a non-empty path")
+        self.current_node = path[0]
+        self._path = list(path)
+        self._path_index = 1
+
     def step(self, dt: float) -> None:
         """Advance the robot along its path by *dt* seconds."""
         if self.is_idle():

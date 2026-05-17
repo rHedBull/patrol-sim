@@ -401,6 +401,25 @@ def put_orientation():
     return jsonify({"ok": True})
 
 
+def _chain_path(waypoints: list[str]) -> tuple[list[str] | None, str | None]:
+    """Glue per-leg A* paths into one polyline, deduping the shared join node.
+
+    Returns ``(path, None)`` on success, or ``(None, error_message)`` if any
+    consecutive pair has no A* path. The caller validates the waypoint count
+    upfront so it can phrase the "too few" error its own way.
+    """
+    full: list[str] = []
+    for a, b in zip(waypoints, waypoints[1:]):
+        leg = nav_graph.find_path(a, b)
+        if leg is None:
+            return None, f"No path from '{a}' to '{b}'"
+        if full and full[-1] == leg[0]:
+            full.extend(leg[1:])
+        else:
+            full.extend(leg)
+    return full, None
+
+
 @app.route("/api/plan/path", methods=["POST"])
 def plan_path():
     """Resolve a list of waypoints into the full chained A* polyline.
@@ -415,15 +434,9 @@ def plan_path():
     if len(waypoints) < 2:
         return jsonify({"error": "Need at least 2 waypoints"}), 400
 
-    full: list[str] = []
-    for a, b in zip(waypoints, waypoints[1:]):
-        leg = nav_graph.find_path(a, b)
-        if leg is None:
-            return jsonify({"error": f"No path from '{a}' to '{b}'"}), 400
-        if full and full[-1] == leg[0]:
-            full.extend(leg[1:])
-        else:
-            full.extend(leg)
+    full, err = _chain_path(waypoints)
+    if err is not None:
+        return jsonify({"error": err}), 400
 
     nodes = nav_graph.nodes
     return jsonify({"path": [{"id": nid, "position": nodes[nid]} for nid in full]})
@@ -560,21 +573,12 @@ def handle_plan_command(data):
         emit("robot_path", {"error": "Plan needs at least 2 waypoints"})
         return
 
-    full: list[str] = []
-    for a, b in zip(waypoints, waypoints[1:]):
-        leg = nav_graph.find_path(a, b)
-        if leg is None:
-            emit("robot_path", {"error": f"No path from '{a}' to '{b}'"})
-            return
-        if full and full[-1] == leg[0]:
-            full.extend(leg[1:])
-        else:
-            full.extend(leg)
+    full, err = _chain_path(waypoints)
+    if err is not None:
+        emit("robot_path", {"error": err})
+        return
 
-    # Sync robot to plan start so movement state is consistent.
-    robot.current_node = full[0]
-    robot._path = list(full)
-    robot._path_index = 1
+    robot.assume_path(full)
     emit("robot_path", {"path": full})
 
 
