@@ -9,7 +9,7 @@ import numpy as np
 class Detection:
     label: str
     confidence: float
-    bbox: list[float]  # [x1, y1, x2, y2]
+    bbox: tuple[float, float, float, float]  # [x1, y1, x2, y2]
 
 
 @dataclass

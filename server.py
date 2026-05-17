@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
-import io
-
 import numpy as np
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from PIL import Image
 from flask_socketio import SocketIO, emit
 
@@ -26,9 +25,9 @@ from vision.grounding_dino import GroundingDINOProcessor
 DEFAULT_SCENES_ROOT = Path("/home/hendrik/coding/engine/data/lidar/annotated")
 SCENES_ROOT: Path = DEFAULT_SCENES_ROOT
 GRAPHS_ROOT = Path(__file__).resolve().parent / "graphs"
-# `_legacy_pointclouds_dir` is checked as a fall-back when a scene has no
-# in-tree `potree/` dir. Lets the old `static/pointclouds/<scene>/` clouds
-# keep working for scenes we haven't rebuilt yet.
+# Fall-back when a scene has no in-tree `potree/` dir. Lets the old
+# `static/pointclouds/<scene>/` clouds keep working for scenes we haven't
+# rebuilt yet.
 _LEGACY_PCD_DIR = Path(__file__).resolve().parent / "static" / "pointclouds"
 
 # Per-scene optimized-mesh cache: scene_name -> served Path. Avoids re-running
@@ -64,7 +63,6 @@ def _scene_from_request() -> str:
         return name
     scenes = _list_scenes()
     if not scenes:
-        from flask import abort
         abort(400, "no scenes available under " + str(SCENES_ROOT))
     # most recent last_used wins
     def _mtime(s: str) -> float:
@@ -172,13 +170,6 @@ def serve_mesh():
     return _send_glb(served)
 
 
-@app.route("/mesh_no_walls.glb")
-def serve_mesh_no_walls():
-    # No-walls meshes aren't part of the per-scene convention; keep route for
-    # the few legacy scenes that have them via the old CLI form.
-    return "No walls mesh not available", 404
-
-
 @app.route("/api/scenes", methods=["GET"])
 def list_scenes():
     """List all scenes that have a `source/mesh.glb`.
@@ -271,7 +262,7 @@ def add_node():
 def update_node(node_id: str):
     data = request.get_json(force=True)
     try:
-        node = nav_graph.get_node(node_id)
+        nav_graph.get_node(node_id)
     except KeyError as exc:
         return jsonify({"error": str(exc)}), 404
     nav_graph.add_node(node_id, tuple(data["position"]))
