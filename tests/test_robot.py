@@ -1,11 +1,8 @@
 """Tests for the Robot class."""
 
 import math
-import sys
-import os
 
-# Ensure project root is on the path so imports resolve.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import pytest
 
 from navigation.graph import NavGraph
 from navigation.robot import Robot
@@ -75,6 +72,3 @@ def test_robot_arrives_at_target():
     assert robot.current_node == "C"
     assert robot.position == [20.0, 0.0, 0.0]
 
-
-# Allow running with plain `python -m pytest tests/test_robot.py`
-import pytest
