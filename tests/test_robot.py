@@ -97,29 +97,34 @@ def test_robot_step_crosses_node_boundary():
     assert robot.position[2] == pytest.approx(0.0, abs=1e-6)
 
 
-def test_robot_accepts_external_path_injection():
-    """Pin the pattern used by `server.handle_plan_command` (server.py:574-577),
-    which sets `current_node`, `_path`, and `_path_index = 1` directly to
-    drive the robot through a server-computed multi-leg plan. A future refactor
-    will replace this with a public `Robot.assume_path(...)` — this test
-    documents the current contract that those three attributes must stay in
-    sync for `is_idle()` / `step()` to work.
+def test_robot_assume_path_drives_step():
+    """`Robot.assume_path(path)` adopts an externally-computed multi-leg path
+    and starts driving from `path[0]` toward `path[1]`. Used by the server's
+    `plan_command` WS handler when A* leg chaining happens caller-side. Does
+    NOT teleport `position` — `step()` animates from wherever the robot is.
     """
     g = _make_line_graph()
     robot = Robot(g, "A", speed=5.0)
 
-    full = ["A", "B", "C"]
-    robot.current_node = full[0]
-    robot._path = list(full)
-    robot._path_index = 1
+    robot.assume_path(["A", "B", "C"])
 
     assert not robot.is_idle()
+    assert robot.current_node == "A"
+    assert robot._path == ["A", "B", "C"]
+    assert robot._path_index == 1
+
     robot.step(1.0)
 
-    # 5 units along A→B.
+    # 5 units along A→B; position interpolates from start, no teleport.
     assert robot.position[0] == pytest.approx(5.0, abs=1e-6)
     assert robot.position[1] == pytest.approx(0.0, abs=1e-6)
-    assert robot.current_node == "A"  # still on the A segment
+
+
+def test_robot_assume_path_rejects_empty_path():
+    g = _make_line_graph()
+    robot = Robot(g, "A")
+    with pytest.raises(ValueError):
+        robot.assume_path([])
 
 
 def test_robot_yaw_updates_on_step():
