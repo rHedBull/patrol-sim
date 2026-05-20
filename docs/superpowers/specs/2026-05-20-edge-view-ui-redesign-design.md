@@ -64,7 +64,7 @@ Consequences:
 
 - `Side` type alias is removed.
 - `view_canonical_key(v)` returns `int(round(v.roll_deg)) % 360` (single integer for dedupe + filenames).
-- `views_in_traversal_direction(views, reversed_)`: when `reversed_=True`, `roll_deg` mirrors as `(360 - roll_deg) % 360` (the "right side" of forward travel is the "left side" of reverse travel; reflecting across the up-axis flips the ring angle).
+- `views_in_traversal_direction(views, reversed_)`: when `reversed_=True`, `roll_deg` mirrors as `(360 - roll_deg) % 360` (the "right side" of forward travel is the "left side" of reverse travel; reflecting across the up-axis flips the ring angle). Worked examples: `roll=90` (right) → `roll=270` (left); `roll=0` (up) and `roll=180` (down) are invariant.
 - `set_edge_views` keeps the `len(views) <= 3` and uniqueness checks.
 - JSON serialization (`graph.py:215`) writes `{"roll_deg": v.roll_deg}`; loader (`graph.py:253`) reads the new field. Files written by PR #7 fail validation with a clear error — acceptable per the hard-break decision.
 
@@ -87,7 +87,9 @@ look_dir = cos(roll)·up_perp + sin(roll)·right_perp
 
 Degenerate case: a near-vertical edge makes `up_perp` ill-defined. Detection: `|world_up·forward| > 0.99`. Fallback: `up_perp = (1, 0, 0)`. Patrol graphs are essentially horizontal, so this branch is defensive but rarely hit.
 
-Render pipeline (`navigation/render.py` or equivalent — file to be confirmed during implementation) replaces the existing `side`+`tilt` → camera-direction code with the formula above. Camera position is the sample point on the edge (mid-edge); the existing capture logic that places the camera on the path is unchanged.
+The view → camera-direction conversion lives in **`static/index.html`** (the browser drives the offscreen renderer; `server.py:307 /api/render_frame` only persists the captured PNG + pose). The existing `side`+`tilt` → look-vector code in the browser route-render loop is replaced by the formula above. Camera position is the sample point on the edge (mid-edge); the existing capture logic that places the camera on the path is unchanged.
+
+The drag-handler convention in §6 (`roll = atan2(v·right_perp, v·up_perp)`) is the inverse of the capture formula (`atan2(sin, cos) = roll`), so a drag that produces `roll=R` will capture a frame whose look direction matches what the cone glyph displays at `roll=R`.
 
 ### 5. View indicator glyph (3D scene)
 
@@ -126,15 +128,14 @@ Edge panel keeps its current location (toolbar strip, `static/index.html:504`) a
 - Before: `[side ▼] [tilt ##] [×]`
 - After: `[roll: ###°] [slider 0–359] [×]`
 
-The slider and number input are bound to `roll_deg`. Changes from the 3D drag push into both controls; changes from the panel push into the cone orientation. Both paths call the same `setEdgeViewRoll(edgeKey, viewIndex, roll_deg)` helper.
+The slider and number input are bound to `roll_deg`. **Both are integer-stepped (`step=1`, range `0..359`)** to match `view_canonical_key`'s rounding behavior — no fractional degrees are persisted. The 3D drag also rounds to int before committing. Changes from the 3D drag push into both controls; changes from the panel push into the cone orientation. Both paths call the same `setEdgeViewRoll(edgeKey, viewIndex, roll_deg)` helper.
 
 `+ Add view` button creates a new view with `roll_deg = 90` (right-of-travel default). Disabled when `views.length >= 3`, as today.
 
 ### 8. File touchpoints
 
 - `navigation/graph.py` — `View` dataclass, `view_canonical_key`, `views_in_traversal_direction`, JSON IO at `:212-254`
-- `navigation/render.py` (or wherever view → camera-pose conversion lives) — replace `side`+`tilt` math with `roll_deg` math
-- `server.py` — request/response payload field rename if the API surfaces `side`/`tilt`
+- `server.py` — no math changes (it only persists the captured frame); only the graph-load/save endpoints need awareness of the new `roll_deg` field, which falls out of `graph.py` serialization changes
 - `static/index.html`:
   - `EDGE_RADIUS` (`:1136`)
   - Edge tube material selection (`:1224-1232`) — dashed-line branch
@@ -147,7 +148,7 @@ The slider and number input are bound to `roll_deg`. Changes from the 3D drag pu
 ### 9. Test plan
 
 - `tests/test_graph.py`: `View(roll_deg=...)` accepts `[0, 360)`, rejects out-of-range; serialization round-trips `roll_deg`; reverse traversal yields `(360 - roll) % 360`; canonical-key dedupe by integer roll.
-- `tests/test_render.py` (or render path tests): camera look direction for `roll_deg ∈ {0, 90, 180, 270}` on a horizontal edge along +X yields the expected world-space vectors (±Y, ±Z).
+- Browser-side look-direction math is exercised via manual UI verification (no Python-side render unit test exists today). Cardinal-angle expectation on an edge along +X: `roll=0 → +Y`, `roll=90 → -Z`, `roll=180 → -Y`, `roll=270 → +Z`.
 - Manual UI verification (browser-verification skill): select edge → drag cone → cone rotates with mouse, panel slider updates; toggle render off → tube becomes dashed; create 3 views at rolls 30/120/240 → three cones radiate from midpoint without overlap.
 
 ## Risks
