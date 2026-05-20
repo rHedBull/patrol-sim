@@ -477,6 +477,10 @@
 <body>
     <div id="header">
         Robot Patrol Simulator
+        <select id="scene-select" title="Switch scene (full-page reload)"
+                style="margin-left:14px; background:#222; color:#ddd; border:1px solid #444; padding:4px 8px; border-radius:3px; font-size:12px; max-width:380px;">
+            <option value="">-- loading scenes --</option>
+        </select>
         <div class="status-dot" id="connection-dot" title="Socket.IO disconnected"></div>
     </div>
 
@@ -497,6 +501,18 @@
                     <button id="btn-save-graph" title="Save current graph">Save Graph</button>
                     <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
                 </span>
+                <div id="edge-panel" style="display:none; margin-top:8px; padding:6px; border:1px solid #444; color:#ddd; font-size:12px;">
+                    <div id="edge-panel-header" style="display:flex; gap:6px; align-items:center;">
+                        <strong>Edge:</strong>
+                        <span id="edge-panel-label">-</span>
+                        <button id="edge-delete" type="button">Delete</button>
+                    </div>
+                    <label style="display:block; margin-top:4px;">
+                        <input type="checkbox" id="edge-render" checked> Render this edge
+                    </label>
+                    <div id="edge-views" style="margin-top:4px;"></div>
+                    <button id="edge-add-view" type="button">+ Add view</button>
+                </div>
                 <button id="btn-hide-walls" class="active" title="Clip near-side geometry">Hide Walls</button>
                 <button id="btn-orient" title="Cycle scene orientation (saved per scene)">Orient ↻</button>
                 <select id="graph-select" title="Load a saved graph">
@@ -618,9 +634,11 @@
 
         // Graph data: nodes and edges
         let graphNodes = [];       // [{id, position: [x,y,z]}]
-        let graphEdges = [];       // [{from, to}]
+        let graphEdges = [];       // [{from, to, render?: bool, views?: [{roll_deg}]}]
+        let selectedEdgeKey = null;
         let graphNodeMeshes = {};  // id -> THREE.Mesh
         let graphEdgeLines = [];   // THREE.Line objects in scene
+        let graphViewCones = [];   // THREE.Mesh cone handles for per-edge views
         let startNodeId = null;    // designated start node
 
         // Robot state
@@ -641,6 +659,84 @@
         const HEADLESS_GRAPH = URL_PARAMS.get('graph') || null;
         const HEADLESS_VIEW = URL_PARAMS.get('view') || 'potree';
         const HEADLESS_SPEED = parseFloat(URL_PARAMS.get('speed') || '2.0');
+
+        // ── Active scene ─────────────────────────────────────────────────
+        // `?scene=` selects which scene under SCENES_ROOT to load. When
+        // missing the server picks the most-recently-used (or first
+        // alphabetical) — we still propagate "" so URLs stay shareable.
+        const ACTIVE_SCENE = URL_PARAMS.get('scene') || '';
+        const SCENE_QS = ACTIVE_SCENE ? `?scene=${encodeURIComponent(ACTIVE_SCENE)}` : '';
+
+        // Auto-inject ?scene= into all backend calls. Cheaper than threading
+        // it through every fetch site. Targets /api/* and /mesh.glb only —
+        // /static/* and /scenes/<name>/* already encode scope in the path.
+        // /api/scenes is excluded — it lists scenes, doesn't operate on one.
+        const _origFetch = window.fetch.bind(window);
+        if (ACTIVE_SCENE) {
+            window.fetch = (input, init) => {
+                const url = typeof input === 'string' ? input : (input?.url || '');
+                const needsScene = (url.startsWith('/api/') && !url.startsWith('/api/scenes'))
+                                   || url === '/mesh.glb' || url.startsWith('/mesh.glb?');
+                if (!needsScene || url.includes('scene=')) return _origFetch(input, init);
+                const sep = url.includes('?') ? '&' : '?';
+                const scoped = url + sep + 'scene=' + encodeURIComponent(ACTIVE_SCENE);
+                return _origFetch(typeof input === 'string' ? scoped : new Request(scoped, input), init);
+            };
+        }
+
+        // ── Scene picker ───────────────────────────────────────────────────
+        function _fmtAgo(ts) {
+            if (!ts) return null;
+            const diff = (Date.now() / 1000) - ts;
+            if (diff < 60) return 'just now';
+            if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+            return Math.round(diff / 86400) + 'd ago';
+        }
+        function _setSelectPlaceholder(sel, label) {
+            sel.replaceChildren();
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = label;
+            sel.appendChild(opt);
+        }
+        (async () => {
+            const sel = document.getElementById('scene-select');
+            if (!sel) return;
+            try {
+                const r = await _origFetch('/api/scenes');
+                const scenes = await r.json();
+                scenes.sort((a, b) => (b.last_used || 0) - (a.last_used || 0));
+                if (!scenes.length) {
+                    _setSelectPlaceholder(sel, '-- no scenes found --');
+                    return;
+                }
+                const activeName = ACTIVE_SCENE || scenes[0].name;
+                sel.replaceChildren();
+                for (const s of scenes) {
+                    const opt = document.createElement('option');
+                    opt.value = s.name;
+                    const parts = [s.name];
+                    if (s.n_triangles) parts.push((s.n_triangles / 1e6).toFixed(1) + 'M tris');
+                    const ago = _fmtAgo(s.last_used);
+                    if (ago) parts.push('last: ' + ago);
+                    if (!s.has_potree) parts.push('no potree');
+                    opt.textContent = parts.join(' · ');
+                    if (s.name === activeName) opt.selected = true;
+                    sel.appendChild(opt);
+                }
+                sel.addEventListener('change', () => {
+                    const target = sel.value;
+                    if (!target || target === ACTIVE_SCENE) return;
+                    const params = new URLSearchParams(window.location.search);
+                    params.set('scene', target);
+                    window.location.search = '?' + params.toString();
+                });
+            } catch (e) {
+                console.warn('scene list fetch failed:', e);
+                _setSelectPlaceholder(sel, '-- error loading --');
+            }
+        })();
         if (HEADLESS) {
             document.body.classList.add('headless', `view-${HEADLESS_VIEW}`);
         }
@@ -931,7 +1027,7 @@
         }
 
         gltfLoader.load(
-            '/mesh.glb',
+            '/mesh.glb' + SCENE_QS,
             async (gltf) => {
                 const mesh = gltf.scene;
                 mesh.traverse((obj) => {
@@ -1024,6 +1120,10 @@
         const nodeMaterialTarget = new THREE.MeshPhongMaterial({ color: 0xff4444 });
         const nodeMaterialStart = new THREE.MeshPhongMaterial({ color: 0x2196f3 });
         const edgeMaterial = new THREE.MeshPhongMaterial({ color: 0xcccccc, transparent: true, opacity: 0.7 });
+        const edgeMaterialDefault = edgeMaterial; // keep original reference
+        const edgeMaterialWithViews = new THREE.MeshPhongMaterial({ color: 0x55ddee, transparent: true, opacity: 0.85 });
+        const edgeMaterialSkipped = new THREE.MeshPhongMaterial({ color: 0x666666, transparent: true, opacity: 0.35 });
+        const edgeMaterialSelected = new THREE.MeshPhongMaterial({ color: 0xffaa00, transparent: true, opacity: 0.95 });
         const pathHighlightMaterial = new THREE.MeshPhongMaterial({ color: 0x00aaff });
 
         // Group for all graph objects
@@ -1034,7 +1134,18 @@
         let pathHighlightLines = [];
 
         const NODE_HEIGHT = 0.5;  // default lift above floor for new nodes
-        const EDGE_RADIUS = 0.02; // tube radius for edges
+        const EDGE_RADIUS = 0.05; // tube radius for edges (thicker = easier to click)
+        const VIEW_ARROW_SHAFT_RADIUS = 0.025;
+        const VIEW_ARROW_SHAFT_LENGTH = 0.55;
+        const VIEW_CONE_RADIUS = 0.10;
+        const VIEW_CONE_LENGTH = 0.25;
+        const edgeMaterialSkippedDashed = new THREE.LineDashedMaterial({
+            color: 0x888888, dashSize: 0.15, gapSize: 0.10, transparent: true, opacity: 0.6,
+        });
+        const edgeMaterialSkippedSelectedDashed = new THREE.LineDashedMaterial({
+            color: 0xffaa00, dashSize: 0.15, gapSize: 0.10, transparent: true, opacity: 0.95,
+        });
+        const viewConeMaterial = new THREE.MeshBasicMaterial({ color: 0x55ddee });
 
         // Reusable raycaster for ground sampling — separate from the
         // global `raycaster` so we don't trample mouse-pick state.
@@ -1047,6 +1158,7 @@
         // cm-rounded (x,z); invalidate when a node's X/Z changes.
         const groundYCache = new Map();
         const groundKey = (x, z) => `${Math.round(x * 100)}|${Math.round(z * 100)}`;
+        function _edgeKey(e) { return e.from < e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
 
         function getGroundYAt(x, z, fallbackY) {
             const key = groundKey(x, z);
@@ -1066,6 +1178,69 @@
             return y;
         }
 
+        // ── Edge view geometry helpers ──────────────────────────────
+        // Build the edge-local frame: forward (traversal dir), up_perp
+        // (world-up projected onto plane ⟂ forward), right_perp.
+        // Degenerate near-vertical edges fall back to +X as up_perp.
+        function _edgeFrame(fromVec3, toVec3) {
+            const forward = toVec3.clone().sub(fromVec3).normalize();
+            const worldUp = new THREE.Vector3(0, 1, 0);
+            let upPerp;
+            if (Math.abs(worldUp.dot(forward)) > 0.99) {
+                upPerp = new THREE.Vector3(1, 0, 0);
+                upPerp.sub(forward.clone().multiplyScalar(forward.dot(upPerp))).normalize();
+            } else {
+                upPerp = worldUp.clone().sub(forward.clone().multiplyScalar(worldUp.dot(forward))).normalize();
+            }
+            const rightPerp = forward.clone().cross(upPerp).normalize();
+            return { forward, upPerp, rightPerp };
+        }
+
+        // Map a roll_deg around the edge axis to a unit look direction.
+        // 0° = upPerp, 90° = rightPerp, 180° = -upPerp, 270° = -rightPerp.
+        function _rollToLookDir(rollDeg, frame) {
+            const r = (rollDeg * Math.PI) / 180.0;
+            return frame.upPerp.clone().multiplyScalar(Math.cos(r))
+                .add(frame.rightPerp.clone().multiplyScalar(Math.sin(r)));
+        }
+
+        // Inverse: given a vector v in the perpendicular plane, recover roll_deg.
+        function _lookDirToRoll(v, frame) {
+            const x = v.dot(frame.upPerp);
+            const y = v.dot(frame.rightPerp);
+            let deg = Math.atan2(y, x) * 180.0 / Math.PI;
+            return ((deg % 360) + 360) % 360;
+        }
+
+        function _makeViewCone(midVec3, lookDir, edgeFrom, edgeTo, viewIndex) {
+            // Group acts as the draggable handle: thin cylinder shaft from the
+            // midpoint outward + cone tip at the far end. Default axis is +Y.
+            const group = new THREE.Group();
+
+            const shaftGeom = new THREE.CylinderGeometry(
+                VIEW_ARROW_SHAFT_RADIUS, VIEW_ARROW_SHAFT_RADIUS, VIEW_ARROW_SHAFT_LENGTH, 8,
+            );
+            shaftGeom.translate(0, VIEW_ARROW_SHAFT_LENGTH / 2, 0);
+            const shaft = new THREE.Mesh(shaftGeom, viewConeMaterial);
+            group.add(shaft);
+
+            const coneGeom = new THREE.ConeGeometry(VIEW_CONE_RADIUS, VIEW_CONE_LENGTH, 12);
+            coneGeom.translate(0, VIEW_ARROW_SHAFT_LENGTH + VIEW_CONE_LENGTH / 2, 0);
+            const cone = new THREE.Mesh(coneGeom, viewConeMaterial);
+            group.add(cone);
+
+            group.position.copy(midVec3);
+            group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), lookDir.clone().normalize());
+
+            const ud = { kind: 'edgeView', edgeFrom, edgeTo, viewIndex };
+            group.userData = ud;
+            // Tag children too so raycaster hits on shaft/cone resolve to the
+            // same logical handle (callers walk up via hit.object).
+            shaft.userData = ud;
+            cone.userData = ud;
+            return group;
+        }
+
         function renderGraph() {
             // Clear existing graph visuals
             while (graphGroup.children.length > 0) {
@@ -1073,6 +1248,7 @@
             }
             graphNodeMeshes = {};
             graphEdgeLines = [];
+            graphViewCones = [];
 
             // Render nodes with posts
             for (const node of graphNodes) {
@@ -1119,17 +1295,59 @@
                 const length = dir.length();
                 const mid = from.clone().add(to).multiplyScalar(0.5);
 
-                const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
-                const cyl = new THREE.Mesh(cylGeom, edgeMaterial);
-                cyl.position.copy(mid);
-                // Align cylinder along the direction
-                cyl.quaternion.setFromUnitVectors(
-                    new THREE.Vector3(0, 1, 0), dir.clone().normalize()
-                );
-                cyl.userData.edgeFrom = edge.from;
-                cyl.userData.edgeTo = edge.to;
-                graphGroup.add(cyl);
-                graphEdgeLines.push(cyl);
+                const isSelected = selectedEdgeKey && _edgeKey(edge) === selectedEdgeKey;
+                if (edge.render === false) {
+                    // Render-skipped edges: dashed line, no tube. Selected variant keeps the
+                    // dashing but tints orange. The faded line stays pickable via the
+                    // edge selection raycast (we still record an invisible tube below).
+                    const lineGeom = new THREE.BufferGeometry().setFromPoints([from, to]);
+                    const line = new THREE.Line(lineGeom, isSelected ? edgeMaterialSkippedSelectedDashed : edgeMaterialSkippedDashed);
+                    line.computeLineDistances();
+                    line.userData.edgeFrom = edge.from;
+                    line.userData.edgeTo = edge.to;
+                    graphGroup.add(line);
+
+                    // Invisible thicker tube for picking (so skipped edges remain clickable)
+                    const pickGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
+                    const pickMat = new THREE.MeshBasicMaterial({ visible: false });
+                    const pickCyl = new THREE.Mesh(pickGeom, pickMat);
+                    pickCyl.position.copy(mid);
+                    pickCyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+                    pickCyl.userData.edgeFrom = edge.from;
+                    pickCyl.userData.edgeTo = edge.to;
+                    graphGroup.add(pickCyl);
+                    graphEdgeLines.push(pickCyl);
+                } else {
+                    const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
+                    let mat;
+                    if (isSelected) {
+                        mat = edgeMaterialSelected;
+                    } else if (edge.views && edge.views.length > 0) {
+                        mat = edgeMaterialWithViews;
+                    } else {
+                        mat = edgeMaterialDefault;
+                    }
+                    const cyl = new THREE.Mesh(cylGeom, mat);
+                    cyl.position.copy(mid);
+                    cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+                    cyl.userData.edgeFrom = edge.from;
+                    cyl.userData.edgeTo = edge.to;
+                    graphGroup.add(cyl);
+                    graphEdgeLines.push(cyl);
+                }
+
+                // Cone glyphs: one per view, anchored at edge midpoint, pointing
+                // radially out along the look direction implied by roll_deg.
+                if (edge.views && edge.views.length > 0) {
+                    const frame = _edgeFrame(from, to);
+                    for (let vi = 0; vi < edge.views.length; vi++) {
+                        const view = edge.views[vi];
+                        const look = _rollToLookDir(view.roll_deg, frame);
+                        const cone = _makeViewCone(mid, look, edge.from, edge.to, vi);
+                        graphGroup.add(cone);
+                        graphViewCones.push(cone);
+                    }
+                }
             }
 
             updateNodeVisuals();
@@ -1511,7 +1729,7 @@
                     clearTimeout(pending.timer);
                     _pendingCaptures.delete(msg.id);
                     if (msg.error) pending.reject(new Error(msg.error));
-                    else pending.resolve({ dataUrl: msg.dataUrl, stats: msg.stats });
+                    else pending.resolve({ dataUrl: msg.dataUrl, stats: msg.stats, intrinsics: msg.intrinsics });
                 }
             }
         });
@@ -1596,6 +1814,144 @@
             return { from: ud.edgeFrom, to: ud.edgeTo };
         }
 
+        // ── Edge panel ──────────────────────────────────────────────────────
+        const edgePanel = document.getElementById('edge-panel');
+        const edgePanelLabel = document.getElementById('edge-panel-label');
+        const edgeRenderCheckbox = document.getElementById('edge-render');
+        const edgeViewsContainer = document.getElementById('edge-views');
+        const edgeDeleteBtn = document.getElementById('edge-delete');
+        const edgeAddViewBtn = document.getElementById('edge-add-view');
+
+        function _findEdgeByKey(key) {
+            return graphEdges.find(e => _edgeKey(e) === key) || null;
+        }
+
+        function _shortId(id) { return id.slice(-4); }
+
+        function openEdgePanel(from, to) {
+            const e = graphEdges.find(x =>
+                (x.from === from && x.to === to) || (x.from === to && x.to === from)
+            );
+            if (!e) return;
+            selectedEdgeKey = _edgeKey(e);
+            edgePanelLabel.textContent = `${_shortId(e.from)} <-> ${_shortId(e.to)}`;
+            edgeRenderCheckbox.checked = e.render !== false;
+            renderEdgeViewsList(e);
+            edgePanel.style.display = '';
+            renderGraph();
+        }
+
+        function closeEdgePanel() {
+            selectedEdgeKey = null;
+            edgePanel.style.display = 'none';
+            renderGraph();
+        }
+
+        function _makeViewRow(view, i) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; gap:4px; align-items:center; margin-top:2px;';
+
+            const label = document.createElement('span');
+            label.textContent = 'roll';
+            label.style.opacity = '0.7';
+
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.className = 'ev-roll-slider';
+            slider.dataset.i = String(i);
+            slider.min = '0'; slider.max = '359'; slider.step = '1';
+            slider.value = String(Math.round(view.roll_deg));
+            slider.style.width = '120px';
+
+            const num = document.createElement('input');
+            num.type = 'number';
+            num.className = 'ev-roll-num';
+            num.dataset.i = String(i);
+            num.min = '0'; num.max = '359'; num.step = '1';
+            num.value = String(Math.round(view.roll_deg));
+            num.style.width = '56px';
+
+            const unit = document.createElement('span');
+            unit.textContent = '°';
+
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'ev-del';
+            del.dataset.i = String(i);
+            del.textContent = '×';
+
+            row.appendChild(label);
+            row.appendChild(slider);
+            row.appendChild(num);
+            row.appendChild(unit);
+            row.appendChild(del);
+            return row;
+        }
+
+        function renderEdgeViewsList(edge) {
+            edgeViewsContainer.replaceChildren();
+            (edge.views || []).forEach((v, i) => {
+                edgeViewsContainer.appendChild(_makeViewRow(v, i));
+            });
+            edgeAddViewBtn.disabled = (edge.views || []).length >= 3;
+        }
+
+        edgeRenderCheckbox.addEventListener('change', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            e.render = edgeRenderCheckbox.checked;
+            renderGraph();
+        });
+
+        edgeDeleteBtn.addEventListener('click', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            graphEdges = graphEdges.filter(x => x !== e);
+            closeEdgePanel();
+        });
+
+        edgeAddViewBtn.addEventListener('click', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            if ((e.views || []).length >= 3) return;
+            // Default roll = 90° (right of travel). If 90° is taken, try 270°, then 0°.
+            const used = new Set((e.views || []).map(v => Math.round(v.roll_deg) % 360));
+            const candidates = [90, 270, 0, 180, 45, 135, 225, 315];
+            const roll = candidates.find(c => !used.has(c)) ?? 90;
+            e.views = (e.views || []).concat([{ roll_deg: roll }]);
+            renderEdgeViewsList(e);
+            renderGraph();
+        });
+
+        edgeViewsContainer.addEventListener('input', (ev) => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            const t = ev.target;
+            const i = parseInt(t.dataset.i, 10);
+            if (Number.isNaN(i) || !e.views[i]) return;
+            if (t.classList.contains('ev-roll-slider') || t.classList.contains('ev-roll-num')) {
+                let n = parseFloat(t.value);
+                if (!Number.isFinite(n)) n = 0;
+                n = ((Math.round(n) % 360) + 360) % 360;
+                e.views[i].roll_deg = n;
+                // Mirror the value into the sibling control.
+                const row = t.parentElement;
+                if (row) {
+                    const other = t.classList.contains('ev-roll-slider')
+                        ? row.querySelector('.ev-roll-num')
+                        : row.querySelector('.ev-roll-slider');
+                    if (other) other.value = String(n);
+                }
+                renderGraph();
+            }
+        });
+
+        edgeViewsContainer.addEventListener('click', (ev) => {
+            if (!ev.target.classList.contains('ev-del')) return;
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            const i = parseInt(ev.target.dataset.i, 10);
+            e.views.splice(i, 1);
+            renderEdgeViewsList(e);
+            renderGraph();
+        });
+        // ── End edge panel ──────────────────────────────────────────────────
+
         function getFloorPosition(event) {
             getMousePosition(event, orbitContainer);
             raycaster.setFromCamera(mouse, orbitCamera);
@@ -1654,9 +2010,46 @@
         let dragStartY = null;        // node Y at drag start (for vertical drag)
         const DRAG_THRESHOLD = 5; // pixels before a click becomes a drag
 
+        // View-cone drag state. Selected edge's view cones become draggable
+        // gizmos that rotate around the edge axis to set roll_deg.
+        let draggingViewCone = null; // { edgeKey, viewIndex, frame, midpoint }
+
         orbitContainer.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return; // left button only
             mouseDownPos = { x: e.clientX, y: e.clientY };
+
+            // View-cone handle takes priority over everything else so the
+            // gizmo never gets stolen by node/edge picks behind it.
+            if (editMode && !connectMode && selectedEdgeKey && graphViewCones.length > 0) {
+                getMousePosition(e, orbitContainer);
+                raycaster.setFromCamera(mouse, orbitCamera);
+                const hits = raycaster.intersectObjects(graphViewCones, true);
+                if (hits.length > 0) {
+                    const cone = hits[0].object;
+                    const ud = cone.userData;
+                    const edge = _findEdgeByKey(_edgeKey({ from: ud.edgeFrom, to: ud.edgeTo }));
+                    if (edge) {
+                        const canonFrom = edge.from < edge.to ? edge.from : edge.to;
+                        const canonTo = edge.from < edge.to ? edge.to : edge.from;
+                        const a = graphNodes.find(n => n.id === canonFrom);
+                        const b = graphNodes.find(n => n.id === canonTo);
+                        if (a && b) {
+                            const av = new THREE.Vector3(a.position[0], a.position[1] + NODE_HEIGHT, a.position[2]);
+                            const bv = new THREE.Vector3(b.position[0], b.position[1] + NODE_HEIGHT, b.position[2]);
+                            const mid = av.clone().add(bv).multiplyScalar(0.5);
+                            draggingViewCone = {
+                                edgeKey: _edgeKey(edge),
+                                viewIndex: ud.viewIndex,
+                                frame: _edgeFrame(av, bv),
+                                midpoint: mid,
+                            };
+                            isDragging = true;
+                            orbitControls.enabled = false;
+                            return;
+                        }
+                    }
+                }
+            }
 
             // Orbit-mode start handle takes precedence over node picking
             // so the handle never gets "lost" behind the tip sphere.
@@ -1684,6 +2077,39 @@
         });
 
         orbitContainer.addEventListener('mousemove', (e) => {
+            // View-cone rotation: project cursor ray onto the plane through
+            // the edge midpoint perpendicular to the edge forward axis, then
+            // recover roll_deg from the offset's up_perp / right_perp components.
+            if (draggingViewCone) {
+                const { frame, midpoint, edgeKey, viewIndex } = draggingViewCone;
+                getMousePosition(e, orbitContainer);
+                raycaster.setFromCamera(mouse, orbitCamera);
+                const ro = raycaster.ray.origin;
+                const rd = raycaster.ray.direction;
+                // Intersect ray with plane (point = midpoint, normal = forward).
+                const denom = rd.dot(frame.forward);
+                if (Math.abs(denom) < 1e-6) return;
+                const t = midpoint.clone().sub(ro).dot(frame.forward) / denom;
+                if (t < 0) return; // plane is behind camera
+                const hit = ro.clone().add(rd.clone().multiplyScalar(t));
+                const offset = hit.sub(midpoint);
+                if (offset.lengthSq() < 1e-8) return;
+                const roll = _lookDirToRoll(offset, frame);
+                const edge = _findEdgeByKey(edgeKey);
+                if (!edge || !edge.views || !edge.views[viewIndex]) return;
+                edge.views[viewIndex].roll_deg = Math.round(roll);
+                // Update the panel slider/number in place.
+                const rows = edgeViewsContainer.children;
+                if (rows[viewIndex]) {
+                    const slider = rows[viewIndex].querySelector('.ev-roll-slider');
+                    const num = rows[viewIndex].querySelector('.ev-roll-num');
+                    if (slider) slider.value = String(Math.round(roll));
+                    if (num) num.value = String(Math.round(roll));
+                }
+                renderGraph();
+                return;
+            }
+
             // Drag the orbit start handle around the circle. We solve for
             // the cursor's intersection with the horizontal plane at
             // y = tip_y + h, then compute theta from the tip in (x,z).
@@ -1777,6 +2203,14 @@
         orbitContainer.addEventListener('mouseup', (e) => {
             if (e.button !== 0) return;
 
+            if (draggingViewCone) {
+                draggingViewCone = null;
+                isDragging = false;
+                mouseDownPos = null;
+                orbitControls.enabled = true;
+                return;
+            }
+
             if (draggingStartHandle) {
                 draggingStartHandle = false;
                 isDragging = false;
@@ -1839,7 +2273,13 @@
                 return;
             }
 
-            if (editMode) {
+            if (editMode && !connectMode) {
+                const edge = getEdgeAtMouse(e);
+                if (edge) {
+                    openEdgePanel(edge.from, edge.to);
+                    mouseDownPos = null;
+                    return;
+                }
                 if (clickedNodeId !== null) {
                     // Click on node -> select/deselect
                     if (selectedNodeId === clickedNodeId) {
@@ -1848,6 +2288,9 @@
                         selectedNodeId = clickedNodeId;
                     }
                     updateNodeVisuals();
+                } else {
+                    // Clicked empty (no node, no edge) - deselect.
+                    closeEdgePanel();
                 }
                 // Single click on empty floor does nothing (double-click to add)
                 mouseDownPos = null;
@@ -1988,7 +2431,7 @@
             );
             if (exists) return;
 
-            const edgeData = { from: fromId, to: toId };
+            const edgeData = { from: fromId, to: toId, render: true, views: [] };
 
             try {
                 const response = await fetch('/api/graph/edge', {
@@ -2163,6 +2606,10 @@
             updateNodeVisuals();
             const renderBtn = document.getElementById('btn-plan-render');
             if (renderBtn) renderBtn.disabled = planActive || planWaypoints.length < 1;
+            const editingDisabled = planActive;
+            edgePanel.querySelectorAll('input, button, select').forEach(el => { el.disabled = editingDisabled; });
+            const saveBtn = document.getElementById('btn-save-graph');
+            if (saveBtn) saveBtn.disabled = editingDisabled;
         }
 
         // ── Arc-length sampling along a polyline ───────────────────────────
@@ -2195,7 +2642,7 @@
                 };
                 const dx = b.x - a.x, dz = b.z - a.z;
                 const yaw = Math.atan2(-dx, -dz);
-                samples.push({ pos, yaw, arcLen: s });
+                samples.push({ pos, yaw, arcLen: s, seg });
             }
             return samples;
         }
@@ -2242,6 +2689,7 @@
             }
             const { path } = await resp.json();
             const positions = path.map(n => ({ x: n.position[0], y: n.position[1], z: n.position[2] }));
+            const pathIds = path.map(n => n.id);
             const samples = arcLengthSample(positions, spacing);
             if (samples.length === 0) { alert('Path too short'); return; }
 
@@ -2265,55 +2713,120 @@
             refreshPlanUI();
             const t0 = performance.now();
             try {
+                const edgeMetaByKey = new Map();
+                for (const e of graphEdges) {
+                    edgeMetaByKey.set(_edgeKey(e), {
+                        render: e.render !== false,
+                        views: (e.views || []).slice(),
+                        canonical: e.from < e.to ? [e.from, e.to] : [e.to, e.from],
+                    });
+                }
+
                 for (let i = 0; i < samples.length; i++) {
                     const s = samples[i];
-                    // Drive parent's robot pose so existing sendPotreePose forwards it.
-                    robotPosition.set(s.pos.x, s.pos.y, s.pos.z);
-                    robotYaw = s.yaw;
-                    robotPitch = 0;
-                    updateRobotMarker();
-                    updateRobotCamera();
+                    const a = pathIds[s.seg];
+                    const b = pathIds[s.seg + 1];
+                    const metaKey = a < b ? `${a}|${b}` : `${b}|${a}`;
+                    const meta = edgeMetaByKey.get(metaKey)
+                              || { render: true, views: [], canonical: [a, b] };
 
-                    // The iframe waits for Potree's LOD stream to settle
-                    // before reading the canvas; we just give it a small
-                    // head-start so it sees the new visible-node set.
-                    await new Promise(r => setTimeout(r, 80));
+                    if (!meta.render) {
+                        progress.textContent = `sample ${i+1}/${samples.length}: skipped (edge ${a.slice(-4)}<->${b.slice(-4)})`;
+                        continue;
+                    }
 
-                    let dataUrl, captureStats = null;
-                    try {
+                    // Build the canonical edge frame so the captured look direction
+                    // is a world-space property of the edge — independent of which
+                    // way the robot happens to be walking. roll_deg is stored in
+                    // canonical orientation; the frame here uses canonical forward.
+                    const canonFrom = graphNodes.find(n => n.id === meta.canonical[0]);
+                    const canonTo = graphNodes.find(n => n.id === meta.canonical[1]);
+                    const _canonFromVec = canonFrom ? new THREE.Vector3(canonFrom.position[0], canonFrom.position[1] + NODE_HEIGHT, canonFrom.position[2]) : new THREE.Vector3();
+                    const _canonToVec = canonTo ? new THREE.Vector3(canonTo.position[0], canonTo.position[1] + NODE_HEIGHT, canonTo.position[2]) : new THREE.Vector3(1, 0, 0);
+                    const _frame = _edgeFrame(_canonFromVec, _canonToVec);
+
+                    async function captureAndPost({ yaw, pitch, viewCode, rollOpt }) {
+                        robotPosition.set(s.pos.x, s.pos.y, s.pos.z);
+                        robotYaw = yaw;
+                        robotPitch = pitch;
+                        updateRobotMarker();
+                        updateRobotCamera();
+                        await new Promise(r => setTimeout(r, 80));
+
                         const cap = await captureFromPotree({
                             maxMs: preset.maxMs,
                             stableFrames: preset.stableFrames,
                             parentTimeoutMs: preset.maxMs + 8000,
                         });
-                        dataUrl = cap.dataUrl;
-                        captureStats = cap.stats || null;
+                        // Eye is +1m above the robot (see sendPotreePose);
+                        // target derives from yaw + pitch.
+                        const eyeX = s.pos.x, eyeY = s.pos.y + 1.0, eyeZ = s.pos.z;
+                        const cy = Math.cos(pitch), sy = Math.sin(pitch);
+                        const fx = -Math.sin(yaw) * cy;
+                        const fy = sy;
+                        const fz = -Math.cos(yaw) * cy;
+                        const pose = {
+                            position: [eyeX, eyeY, eyeZ],
+                            target: [eyeX + fx, eyeY + fy, eyeZ + fz],
+                            yaw, pitch,
+                            arc_length: s.arcLen,
+                            quality,
+                            intrinsics: cap.intrinsics || null,
+                        };
+                        if (rollOpt !== undefined && rollOpt !== null) {
+                            pose.roll_deg = rollOpt;
+                        }
+                        const r = await fetch('/api/render_frame', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ name: runName, index: i, view: viewCode, png_b64: cap.dataUrl, pose }),
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            throw new Error(err.error || r.status);
+                        }
+                        return cap.stats;
+                    }
+
+                    let captureStats = null;
+                    try {
+                        captureStats = await captureAndPost({ yaw: s.yaw, pitch: 0, viewCode: 'forward' });
                     } catch (e) {
-                        console.error('capture failed at sample', i, e);
+                        console.error('forward capture failed at sample', i, e);
                         progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
                         continue;
                     }
 
-                    const pose = {
-                        position: [s.pos.x, s.pos.y, s.pos.z],
-                        yaw: s.yaw,
-                        arc_length: s.arcLen,
-                        quality,
-                    };
-                    const r = await fetch('/api/render_frame', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ name: runName, index: i, png_b64: dataUrl, pose }),
-                    });
-                    if (!r.ok) {
-                        const err = await r.json().catch(() => ({}));
-                        progress.textContent = `frame ${i+1}: save failed (${err.error || r.status})`;
-                        break;
+                    function _viewCodeRoll(rollDeg) {
+                        return `R${String(Math.round(rollDeg)).padStart(3, '0')}`;
                     }
+                    for (const v of meta.views) {
+                        const roll = ((Math.round(v.roll_deg) % 360) + 360) % 360;
+                        const look = _rollToLookDir(roll, _frame);
+                        // Convert lookDir → (yaw, pitch) for the existing camera pipeline.
+                        // Forward convention: f = (-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)).
+                        const pitchRad = Math.asin(Math.max(-1, Math.min(1, look.y)));
+                        const yawRad = Math.atan2(-look.x, -look.z);
+                        const code = _viewCodeRoll(roll);
+                        try {
+                            await captureAndPost({
+                                yaw: yawRad,
+                                pitch: pitchRad,
+                                viewCode: code,
+                                rollOpt: roll,
+                            });
+                        } catch (e) {
+                            console.error('view capture failed at sample', i, code, e);
+                            // Continue — partial capture is preferable to halting the run.
+                        }
+                    }
+
+                    robotPitch = 0;
+
                     const t = captureStats
                         ? `${captureStats.elapsedMs}ms ${(captureStats.lru/1e6).toFixed(1)}M pts`
                         : '';
-                    progress.textContent = `frame ${i+1}/${samples.length}  s=${s.arcLen.toFixed(1)}m  ${t}`;
+                    progress.textContent = `frame ${i+1}/${samples.length}  s=${s.arcLen.toFixed(1)}m  +${mirroredViews.length} views  ${t}`;
                 }
                 const dt = ((performance.now() - t0) / 1000).toFixed(1);
                 progress.textContent = `done: ${samples.length} frames in ${dt}s → renders/${runName}/`;
@@ -2500,7 +3013,7 @@
                     sendOrbitPose(cam, tip);
                     await new Promise(r => setTimeout(r, 80));
 
-                    let dataUrl, captureStats = null;
+                    let dataUrl, captureStats = null, capIntrinsics = null;
                     try {
                         const cap = await captureFromPotree({
                             maxMs: preset.maxMs,
@@ -2509,6 +3022,7 @@
                         });
                         dataUrl = cap.dataUrl;
                         captureStats = cap.stats || null;
+                        capIntrinsics = cap.intrinsics || null;
                     } catch (e) {
                         console.error('orbit capture failed at sample', i, e);
                         progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
@@ -2524,6 +3038,7 @@
                         height_m: p.h,
                         node_id: node.id,
                         quality,
+                        intrinsics: capIntrinsics,
                     };
                     const r = await fetch('/api/render_frame', {
                         method: 'POST',
@@ -2646,7 +3161,12 @@
                 if (response.ok) {
                     const data = await response.json();
                     graphNodes = data.nodes || [];
-                    graphEdges = data.edges || [];
+                    graphEdges = (data.edges || []).map(e => ({
+                        from: e.from,
+                        to: e.to,
+                        render: e.render !== false,
+                        views: Array.isArray(e.views) ? e.views.slice() : [],
+                    }));
                     startNodeId = data.start_node || null;
                     applyOrbitFromServer(data.orbit);
                     renderGraph();
@@ -2729,11 +3249,40 @@
             };
         }
 
+        function serializeEdges() {
+            return graphEdges.map(e => {
+                const out = { from: e.from, to: e.to };
+                if (e.render === false) out.render = false;
+                if (e.views && e.views.length > 0) {
+                    out.views = e.views.map(v => ({ roll_deg: v.roll_deg }));
+                }
+                return out;
+            });
+        }
+
         async function saveGraph() {
             const name = prompt('Graph name:', 'default');
             if (!name) return;
 
             try {
+                // Push current frontend graph state (including edge metadata) to the
+                // server so the next save reflects render/views edits made via the UI.
+                const graphPayload = {
+                    nodes: graphNodes.map(n => ({ id: n.id, position: n.position })),
+                    edges: serializeEdges(),
+                };
+                if (startNodeId) graphPayload.start_node = startNodeId;
+
+                const putResp = await fetch('/api/graph', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(graphPayload),
+                });
+                if (!putResp.ok) {
+                    console.error('Failed to sync graph before save:', await putResp.text());
+                    return;
+                }
+
                 const response = await fetch('/api/graph/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2791,6 +3340,7 @@
                 selectedNodeId = null;
                 document.getElementById('btn-add-edge').classList.remove('active');
                 updateNodeVisuals();
+                closeEdgePanel();
             }
 
             applyEditSubmodeUI();
@@ -3035,6 +3585,7 @@
                     editOnlyControls.hidden = true;
                     connectMode = false;
                     document.getElementById('btn-add-edge').classList.remove('active');
+                    closeEdgePanel();
                 }
 
                 // Snap robot to start node

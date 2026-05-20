@@ -38,7 +38,28 @@ Select a node (click it), then press **Delete** or **Backspace**. All connected 
 
 Edges are always bidirectional. Duplicate edges are ignored.
 
-Edges render as thin grey tubes at node height.
+Edges render as grey tubes at node height. In **Connect Nodes** mode, clicking an edge deletes it. In normal edit mode, clicking an edge **selects** it and opens the Edge Panel below the toolbar.
+
+### Edge Panel (per-edge render options)
+
+Selecting an edge in edit mode opens the Edge Panel:
+
+- **Render this edge** — when unticked, the route still traverses this edge but no frames are captured along it. Skipped edges render as **dashed grey lines** instead of solid tubes for an unambiguous "will not render" signal.
+- **Views** — up to 3 extra captures per arc-length sample on the edge. Each view is a single `roll_deg` (`0..359`) — a rotation around the edge axis that sets where the camera looks:
+  - `0°` = straight up (world-up projected onto the perpendicular plane)
+  - `90°` = right of traversal
+  - `180°` = down
+  - `270°` = left of traversal
+  Edges that have views render as cyan tubes. Each view also adds a small cyan **cone glyph** at the edge midpoint pointing in the view's look direction.
+- **Delete** — removes the edge.
+
+#### Editing view angles
+
+While an edge is selected, its view cones are draggable gizmos. Click and drag a cone tip to rotate the view around the edge axis; the `roll` slider and number field in the Edge Panel update live. You can also type or scrub directly in the panel — the cone glyph mirrors the change in 3D.
+
+View frames are saved as `frame_NNNN__R<roll>.png` (three-digit zero-padded roll, e.g. `frame_NNNN__R090.png`), one extra image per view per sample, alongside the forward `frame_NNNN.png`. `roll_deg` is stored in canonical edge orientation (`from < to` lexicographically); when traversal is reversed, the look direction stays the same in world space, so no run-time mirror is needed.
+
+Edge metadata persists with **Save Graph**.
 
 ### Setting the start node
 
