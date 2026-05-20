@@ -497,6 +497,18 @@
                     <button id="btn-save-graph" title="Save current graph">Save Graph</button>
                     <button id="btn-delete-graph" title="Delete a saved graph">Delete Graph</button>
                 </span>
+                <div id="edge-panel" style="display:none; margin-top:8px; padding:6px; border:1px solid #444; color:#ddd; font-size:12px;">
+                    <div id="edge-panel-header" style="display:flex; gap:6px; align-items:center;">
+                        <strong>Edge:</strong>
+                        <span id="edge-panel-label">-</span>
+                        <button id="edge-delete" type="button">Delete</button>
+                    </div>
+                    <label style="display:block; margin-top:4px;">
+                        <input type="checkbox" id="edge-render" checked> Render this edge
+                    </label>
+                    <div id="edge-views" style="margin-top:4px;"></div>
+                    <button id="edge-add-view" type="button">+ Add view</button>
+                </div>
                 <button id="btn-hide-walls" class="active" title="Clip near-side geometry">Hide Walls</button>
                 <button id="btn-orient" title="Cycle scene orientation (saved per scene)">Orient ↻</button>
                 <select id="graph-select" title="Load a saved graph">
@@ -1612,6 +1624,133 @@
             return { from: ud.edgeFrom, to: ud.edgeTo };
         }
 
+        // ── Edge panel ──────────────────────────────────────────────────────
+        const edgePanel = document.getElementById('edge-panel');
+        const edgePanelLabel = document.getElementById('edge-panel-label');
+        const edgeRenderCheckbox = document.getElementById('edge-render');
+        const edgeViewsContainer = document.getElementById('edge-views');
+        const edgeDeleteBtn = document.getElementById('edge-delete');
+        const edgeAddViewBtn = document.getElementById('edge-add-view');
+
+        function _findEdgeByKey(key) {
+            return graphEdges.find(e => _edgeKey(e) === key) || null;
+        }
+
+        function _shortId(id) { return id.slice(-4); }
+
+        function openEdgePanel(from, to) {
+            const e = graphEdges.find(x =>
+                (x.from === from && x.to === to) || (x.from === to && x.to === from)
+            );
+            if (!e) return;
+            selectedEdgeKey = _edgeKey(e);
+            edgePanelLabel.textContent = `${_shortId(e.from)} <-> ${_shortId(e.to)}`;
+            edgeRenderCheckbox.checked = e.render !== false;
+            renderEdgeViewsList(e);
+            edgePanel.style.display = '';
+            renderGraph();
+        }
+
+        function closeEdgePanel() {
+            selectedEdgeKey = null;
+            edgePanel.style.display = 'none';
+            renderGraph();
+        }
+
+        function _makeViewRow(view, i) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; gap:4px; align-items:center; margin-top:2px;';
+
+            const sel = document.createElement('select');
+            sel.className = 'ev-side';
+            sel.dataset.i = String(i);
+            for (const opt of ['left', 'right']) {
+                const o = document.createElement('option');
+                o.value = opt;
+                o.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
+                if (view.side === opt) o.selected = true;
+                sel.appendChild(o);
+            }
+
+            const tilt = document.createElement('input');
+            tilt.type = 'number';
+            tilt.className = 'ev-tilt';
+            tilt.dataset.i = String(i);
+            tilt.value = String(view.tilt);
+            tilt.min = '-90'; tilt.max = '90'; tilt.step = '5';
+            tilt.style.width = '64px';
+
+            const unit = document.createElement('span');
+            unit.textContent = '°';
+
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'ev-del';
+            del.dataset.i = String(i);
+            del.textContent = '×';
+
+            row.appendChild(sel);
+            row.appendChild(tilt);
+            row.appendChild(unit);
+            row.appendChild(del);
+            return row;
+        }
+
+        function renderEdgeViewsList(edge) {
+            edgeViewsContainer.replaceChildren();
+            (edge.views || []).forEach((v, i) => {
+                edgeViewsContainer.appendChild(_makeViewRow(v, i));
+            });
+            edgeAddViewBtn.disabled = (edge.views || []).length >= 3;
+        }
+
+        edgeRenderCheckbox.addEventListener('change', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            e.render = edgeRenderCheckbox.checked;
+            renderGraph();
+        });
+
+        edgeDeleteBtn.addEventListener('click', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            graphEdges = graphEdges.filter(x => x !== e);
+            closeEdgePanel();
+        });
+
+        edgeAddViewBtn.addEventListener('click', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            if ((e.views || []).length >= 3) return;
+            e.views = (e.views || []).concat([{ side: 'left', tilt: 0 }]);
+            renderEdgeViewsList(e);
+            renderGraph();
+        });
+
+        edgeViewsContainer.addEventListener('change', (ev) => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            const t = ev.target;
+            const i = parseInt(t.dataset.i, 10);
+            if (Number.isNaN(i) || !e.views[i]) return;
+            if (t.classList.contains('ev-side')) {
+                e.views[i].side = t.value;
+            } else if (t.classList.contains('ev-tilt')) {
+                let n = parseFloat(t.value);
+                if (!Number.isFinite(n)) n = 0;
+                n = Math.max(-90, Math.min(90, n));
+                e.views[i].tilt = n;
+                t.value = String(n);
+            }
+            renderGraph();
+        });
+
+        edgeViewsContainer.addEventListener('click', (ev) => {
+            if (!ev.target.classList.contains('ev-del')) return;
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            const i = parseInt(ev.target.dataset.i, 10);
+            e.views.splice(i, 1);
+            renderEdgeViewsList(e);
+            renderGraph();
+        });
+        // ── End edge panel ──────────────────────────────────────────────────
+
         function getFloorPosition(event) {
             getMousePosition(event, orbitContainer);
             raycaster.setFromCamera(mouse, orbitCamera);
@@ -1855,7 +1994,13 @@
                 return;
             }
 
-            if (editMode) {
+            if (editMode && !connectMode) {
+                const edge = getEdgeAtMouse(e);
+                if (edge) {
+                    openEdgePanel(edge.from, edge.to);
+                    mouseDownPos = null;
+                    return;
+                }
                 if (clickedNodeId !== null) {
                     // Click on node -> select/deselect
                     if (selectedNodeId === clickedNodeId) {
@@ -1864,6 +2009,9 @@
                         selectedNodeId = clickedNodeId;
                     }
                     updateNodeVisuals();
+                } else {
+                    // Clicked empty (no node, no edge) - deselect.
+                    closeEdgePanel();
                 }
                 // Single click on empty floor does nothing (double-click to add)
                 mouseDownPos = null;
@@ -2841,6 +2989,7 @@
                 selectedNodeId = null;
                 document.getElementById('btn-add-edge').classList.remove('active');
                 updateNodeVisuals();
+                closeEdgePanel();
             }
 
             applyEditSubmodeUI();
@@ -3085,6 +3234,7 @@
                     editOnlyControls.hidden = true;
                     connectMode = false;
                     document.getElementById('btn-add-edge').classList.remove('active');
+                    closeEdgePanel();
                 }
 
                 // Snap robot to start node
