@@ -268,6 +268,67 @@ class TestRenderFrame:
         assert png_file.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+class TestRenderFrameViews:
+    """Per-edge auxiliary view captures (frame_NNNN__<view>.png)."""
+
+    def test_default_view_is_forward(self, server_state):
+        s = server_state
+        resp = s.client.post("/api/render_frame" + _qs(s.scene), json={
+            "name": "run1", "index": 0, "png_b64": _png_b64(), "pose": {"yaw": 0.0},
+        })
+        assert resp.status_code == 200
+        manifest = json.loads(
+            (s.scenes_root / s.scene / "renders" / "run1" / "manifest.json").read_text()
+        )
+        assert manifest["frames"][0]["view"] == "forward"
+        assert manifest["frames"][0]["file"] == "frame_0000.png"
+
+    def test_view_suffix_creates_distinct_filename(self, server_state):
+        s = server_state
+        s.client.post("/api/render_frame" + _qs(s.scene), json={
+            "name": "run1", "index": 0, "png_b64": _png_b64(), "pose": {"yaw": 0.0},
+        })
+        r = s.client.post("/api/render_frame" + _qs(s.scene), json={
+            "name": "run1", "index": 0, "view": "L+10",
+            "png_b64": _png_b64(), "pose": {"yaw": 0.0, "side": "left", "tilt": 10},
+        })
+        assert r.status_code == 200
+        out = s.scenes_root / s.scene / "renders" / "run1"
+        assert (out / "frame_0000.png").exists()
+        assert (out / "frame_0000__L+10.png").exists()
+        manifest = json.loads((out / "manifest.json").read_text())
+        views = sorted(f["view"] for f in manifest["frames"])
+        assert views == ["L+10", "forward"]
+
+    def test_dedupe_replaces_same_index_and_view(self, server_state):
+        s = server_state
+        for _ in range(2):
+            s.client.post("/api/render_frame" + _qs(s.scene), json={
+                "name": "run1", "index": 0, "view": "L+10",
+                "png_b64": _png_b64(), "pose": {"yaw": 0.0},
+            })
+        manifest = json.loads(
+            (s.scenes_root / s.scene / "renders" / "run1" / "manifest.json").read_text()
+        )
+        assert sum(1 for f in manifest["frames"] if f["view"] == "L+10") == 1
+
+    def test_legacy_manifest_entries_get_forward_view(self, server_state):
+        s = server_state
+        out = s.scenes_root / s.scene / "renders" / "run1"
+        out.mkdir(parents=True)
+        (out / "manifest.json").write_text(json.dumps({
+            "name": "run1", "scene": s.scene,
+            "frames": [{"index": 0, "file": "frame_0000.png", "position": [0, 0, 0]}],
+        }))
+        s.client.post("/api/render_frame" + _qs(s.scene), json={
+            "name": "run1", "index": 1, "view": "forward",
+            "png_b64": _png_b64(), "pose": {"yaw": 0.0},
+        })
+        manifest = json.loads((out / "manifest.json").read_text())
+        legacy = next(f for f in manifest["frames"] if f["index"] == 0)
+        assert legacy["view"] == "forward"
+
+
 # ── /api/graph/node/<id> PUT ─────────────────────────────────────────────────
 
 
