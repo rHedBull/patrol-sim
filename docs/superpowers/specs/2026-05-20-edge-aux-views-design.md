@@ -82,19 +82,22 @@ The `render` flag is symmetric — skipping an edge skips it in both directions.
 
 Changes:
 
-- **Per-segment edge tracking.** `arcLengthSample` already knows the current segment index `seg` while walking `cum[]`. Extend its output to include `seg` per sample, plus the chained path retains node ids (already returned by `/api/plan/path`). The frontend maps `seg → (nodeA_id, nodeB_id)` and resolves edge metadata from a `graphEdgesById` map built at graph-load time.
-- **Skip.** If the edge for `samples[i]` has `render === false`, skip the entire sample (no pose change, no capture, no POST). The index `i` simply advances; the manifest becomes sparse, which downstream tools tolerate (they iterate `frames[]`).
-- **Multi-view capture.** For a non-skipped sample, capture forward as today (`yaw = s.yaw`, `pitch = 0`). Then for each view in the edge's `views` (after applying direction-mirror), set:
+- **Per-segment edge tracking.** `arcLengthSample` already knows the current segment index `seg` while walking `cum[]`. Extend its output to include `seg` per sample. `/api/plan/path` already returns `[{id, position}, ...]` per node; today `renderPlanFrames` discards ids via `path.map(n => ({x,y,z}))`. Change: also capture `ids = path.map(n => n.id)`. For sample `seg = k`, the traversed edge endpoints are `(ids[k], ids[k+1])`. The frontend resolves edge metadata from a `graphEdgesByPair` map (keyed by sorted `[a,b]` join) built at graph-load time.
+- **Direction is per-segment, not per-edge.** A chained path can revisit the same edge (loops/backtracks). For each segment, compare `(ids[k], ids[k+1])` against the canonical edge ordering (`from < to`) stored in the metadata: if forward, apply views as-is; if reversed, mirror `side`. Re-evaluated independently per occurrence.
+- **Skip.** If the edge for `samples[i]` has `render === false`, skip the entire sample (no pose change, no capture, no POST), regardless of any `views` defined on it. Index `i` advances; the manifest becomes sparse, which downstream tools tolerate (they iterate `frames[]`). Validated by the explicit test in §Testing.
+- **Multi-view capture.** For a non-skipped sample, capture forward as today (`yaw = s.yaw`, `pitch = 0`). Then for each view in the edge's `views` (after direction-mirror), set:
   - `robotYaw = s.yaw + (sideMirrored === "left" ? -π/2 : +π/2)`
-  - `robotPitch = tilt_radians`
+  - `robotPitch = tilt_radians` — confirmed against existing code (`robotCamera.rotation.order = 'YXZ'`, `rotation.x = robotPitch`); in Three.js this convention makes **+pitch = look up**, matching `+tilt = up`.
   - capture, POST with view-suffixed metadata.
   Restore `robotPitch = 0` between samples.
 - **POST payload.** New optional field `view`. The server uses `(index, view)` as the dedupe key when replacing manifest entries.
+- **Mid-render graph edits.** Edit-mode UI is already gated by the live/edit toggle; we additionally disable the Edge Panel inputs and **Save Graph** while `planActive === true`. The render loop also snapshots `graphEdgesByPair` at start so concurrent mutations (if any escape the gate) cannot corrupt an in-flight run.
 
 ### Filenames and manifest
 
 - Forward frame keeps the existing name: `frame_NNNN.png`.
-- View frames append `__<viewcode>` where viewcode is `L<+|-><tilt>` or `R<+|-><tilt>` (zero-padded integer degrees, sign explicit): `frame_0042__L+10.png`, `frame_0042__R-45.png`.
+- View frames append `__<viewcode>` where viewcode is `L<sign><tilt>` or `R<sign><tilt>` (sign always emitted, tilt is `|tilt|` rounded to nearest integer, no zero-padding): `frame_0042__L+10.png`, `frame_0042__R-45.png`, `frame_0042__L+0.png`. The sign of `0` is canonicalized to `+`.
+- **Duplicate views are rejected.** `set_edge_views` and `from_dict` validate that `(side, round(tilt))` is unique within an edge's views list; collisions error rather than silently overwriting frames.
 - Manifest entries include:
   ```json
   { "index": 42, "file": "frame_0042__L+10.png",
@@ -108,9 +111,9 @@ Changes:
 
 State today: edges are click-to-delete in connect mode. We add an **edit-edge selection** distinct from the delete gesture.
 
-- New UX: in edit mode, when neither "Connect Nodes" nor explicit delete is armed, clicking an edge **selects** it and opens an **Edge Panel** beneath the existing graph-edit controls. Clicking empty space deselects.
+- New UX: in edit mode, clicking an edge **selects** it and opens an **Edge Panel** beneath the existing graph-edit controls. Clicking empty space deselects. The previous click-to-delete-on-any-edge gesture is removed — delete is always via the panel's button. This unifies behavior so users don't have to know whether an edge has metadata; the migration cost is one extra click for the (rare) delete operation.
 - Edge Panel contents:
-  - Header: `edge: <nodeA short id> ↔ <nodeB short id>` + delete button (replaces the previous click-to-delete affordance on selected edges; unselected edges still click-to-delete to preserve current ergonomics).
+  - Header: `edge: <nodeA short id> ↔ <nodeB short id>` + **Delete edge** button.
   - `[x] Render this edge` checkbox.
   - **Views** list (up to 3 rows):
     - Each row: `[ Left | Right ]` toggle, `tilt °` number input (step 5, range −90..90), delete row.
@@ -129,7 +132,9 @@ Edge-line material varies by metadata:
 
 ## Server-side changes
 
-`/api/render_frame` accepts an optional `view` (string). Manifest dedupe key changes from `index` to `(index, view)`. No new endpoints. The graph save/load endpoints don't change — they already round-trip whatever `NavGraph.to_dict` produces.
+`/api/render_frame` accepts an optional `view` (string, default `"forward"`). Manifest dedupe key changes from `index` to `(index, view)`. **Migration:** on each write, entries in the existing manifest that lack a `view` field are normalized to `view: "forward"` in-place before applying the dedupe filter, so reruns over a pre-existing manifest don't leave orphan untagged entries.
+
+No new endpoints. The graph save/load endpoints don't change — they already round-trip whatever `NavGraph.to_dict` produces.
 
 ## Backward compatibility
 
@@ -142,9 +147,11 @@ Edge-line material varies by metadata:
 Unit tests (`tests/` mirrors `navigation/graph.py`):
 
 - Round-trip a graph with views + skip flag through `to_dict` / `from_dict`.
-- `set_edge_views` enforces `len(views) <= 3` and `tilt ∈ [-90, 90]`.
+- `set_edge_views` enforces `len(views) <= 3`, `tilt ∈ [-90, 90]`, and unique `(side, round(tilt))` within the list.
+- `from_dict` applies the same validation; malformed/out-of-range JSON raises (no silent clamping).
 - Direction-mirror helper: given `views` defined `A→B`, traversal `B→A` returns side-mirrored copies with tilt preserved.
-- Legacy graph JSON (no metadata fields) loads with defaults.
+- Legacy graph JSON (no metadata fields) loads with defaults; saving back is byte-identical for legacy graphs with default metadata.
+- Render-skip wins over views: an edge with `render=false` AND `views=[...]` produces zero frames for samples on that segment (asserted via a render-loop unit-level helper, since the full capture loop is browser-side).
 
 Frontend / integration verified manually in the browser per `browser-verification` skill: place a graph, mark one edge with two views and one with `render=false`, run a render, confirm filename suffixes, sparse manifest indices, and correct camera poses in the captured PNGs.
 
