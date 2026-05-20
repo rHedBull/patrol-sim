@@ -7,7 +7,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -16,12 +16,40 @@ class Node:
     position: tuple[float, float, float]
 
 
+Side = Literal["left", "right"]
+
+
+@dataclass(frozen=True)
+class View:
+    side: Side
+    tilt: float  # degrees; 0 = horizontal, +up, -down
+
+    def __post_init__(self) -> None:
+        if self.side not in ("left", "right"):
+            raise ValueError(f"View.side must be 'left' or 'right', got {self.side!r}")
+        if not (-90.0 <= float(self.tilt) <= 90.0):
+            raise ValueError(f"View.tilt must be in [-90, 90], got {self.tilt}")
+
+
+def view_canonical_key(v: View) -> tuple[Side, int]:
+    """Stable (side, signed_int_tilt) key used for dedupe + filenames.
+    `-0` is normalized to `0` by int rounding."""
+    return (v.side, int(round(v.tilt)) or 0)
+
+
+@dataclass
+class EdgeMeta:
+    render: bool = True
+    views: list[View] = field(default_factory=list)
+
+
 class NavGraph:
     """Bidirectional navigation graph supporting A* shortest-path search."""
 
     def __init__(self) -> None:
         self._nodes: dict[str, Node] = {}
         self._edges: dict[str, set[str]] = {}
+        self._edge_meta: dict[frozenset[str], EdgeMeta] = {}
         self.start_node: str | None = None
 
     @property
@@ -41,6 +69,7 @@ class NavGraph:
         # Remove all edges referencing this node
         for neighbor in list(self._edges.get(id, [])):
             self._edges[neighbor].discard(id)
+            self._edge_meta.pop(self._edge_key(id, neighbor), None)
         del self._edges[id]
         del self._nodes[id]
         if self.start_node == id:
@@ -64,11 +93,47 @@ class NavGraph:
     def remove_edge(self, from_id: str, to_id: str) -> None:
         self._edges.get(from_id, set()).discard(to_id)
         self._edges.get(to_id, set()).discard(from_id)
+        self._edge_meta.pop(self._edge_key(from_id, to_id), None)
 
     def neighbors(self, id: str) -> set[str]:
         if id not in self._nodes:
             raise KeyError(f"Node '{id}' not found")
         return set(self._edges.get(id, set()))
+
+    # ── Edge metadata ────────────────────────────────────────────────
+
+    @staticmethod
+    def _edge_key(a: str, b: str) -> frozenset[str]:
+        return frozenset({a, b})
+
+    def _require_edge(self, a: str, b: str) -> None:
+        if b not in self._edges.get(a, set()):
+            raise KeyError(f"Edge ({a!r}, {b!r}) not found")
+
+    def get_edge_meta(self, a: str, b: str) -> EdgeMeta:
+        self._require_edge(a, b)
+        meta = self._edge_meta.get(self._edge_key(a, b))
+        return meta if meta is not None else EdgeMeta()
+
+    def set_edge_render(self, a: str, b: str, render: bool) -> None:
+        self._require_edge(a, b)
+        key = self._edge_key(a, b)
+        meta = self._edge_meta.get(key) or EdgeMeta()
+        self._edge_meta[key] = EdgeMeta(render=bool(render), views=list(meta.views))
+
+    def set_edge_views(self, a: str, b: str, views: list[View]) -> None:
+        self._require_edge(a, b)
+        if len(views) > 3:
+            raise ValueError(f"At most 3 views per edge, got {len(views)}")
+        seen: set[tuple[Side, int]] = set()
+        for v in views:
+            k = view_canonical_key(v)
+            if k in seen:
+                raise ValueError(f"Duplicate canonical view key {k} in views list")
+            seen.add(k)
+        key = self._edge_key(a, b)
+        meta = self._edge_meta.get(key) or EdgeMeta()
+        self._edge_meta[key] = EdgeMeta(render=meta.render, views=list(views))
 
     # ── A* pathfinding ───────────────────────────────────────────────
 

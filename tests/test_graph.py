@@ -103,3 +103,74 @@ class TestSerializeRoundtrip:
         assert g3.get_node("B").position == (1, 0, 0)
         assert g3.find_path("A", "C") == ["A", "B", "C"]
         tmp.unlink()
+
+
+from navigation.graph import EdgeMeta, View
+
+
+class TestEdgeMeta:
+    def test_default_render_is_true_and_views_empty(self):
+        meta = EdgeMeta()
+        assert meta.render is True
+        assert meta.views == []
+
+    def test_view_accepts_left_right_and_tilt_in_range(self):
+        v1 = View(side="left", tilt=10)
+        v2 = View(side="right", tilt=-45.0)
+        assert v1.side == "left" and v1.tilt == 10
+        assert v2.side == "right" and v2.tilt == -45.0
+
+    def test_view_rejects_bad_side(self):
+        with pytest.raises(ValueError):
+            View(side="up", tilt=0)
+
+    def test_view_rejects_tilt_out_of_range(self):
+        with pytest.raises(ValueError):
+            View(side="left", tilt=91)
+        with pytest.raises(ValueError):
+            View(side="right", tilt=-90.0001)
+
+
+class TestEdgeMetaApi:
+    def _g(self):
+        g = NavGraph()
+        g.add_node("A", (0, 0, 0))
+        g.add_node("B", (1, 0, 0))
+        g.add_edge("A", "B")
+        return g
+
+    def test_get_edge_meta_returns_default_when_unset(self):
+        g = self._g()
+        meta = g.get_edge_meta("A", "B")
+        assert meta.render is True
+        assert meta.views == []
+
+    def test_set_edge_render_round_trip(self):
+        g = self._g()
+        g.set_edge_render("A", "B", False)
+        assert g.get_edge_meta("A", "B").render is False
+        assert g.get_edge_meta("B", "A").render is False  # symmetric
+
+    def test_set_edge_views_rejects_more_than_three(self):
+        g = self._g()
+        with pytest.raises(ValueError):
+            g.set_edge_views("A", "B", [
+                View("left", 0), View("right", 0),
+                View("left", 30), View("right", 30),
+            ])
+
+    def test_set_edge_views_rejects_duplicate_canonical_key(self):
+        g = self._g()
+        with pytest.raises(ValueError):
+            g.set_edge_views("A", "B", [View("left", 0.4), View("left", -0.4)])
+
+    def test_set_edge_views_on_missing_edge_raises(self):
+        g = self._g()
+        with pytest.raises(KeyError):
+            g.set_edge_views("A", "C", [View("left", 0)])
+
+    def test_views_canonical_key_helper(self):
+        from navigation.graph import view_canonical_key
+        assert view_canonical_key(View("left", 0.4)) == ("left", 0)
+        assert view_canonical_key(View("left", -0.4)) == ("left", 0)
+        assert view_canonical_key(View("right", -45)) == ("right", -45)
