@@ -16,15 +16,16 @@ PNG_1x1 = (
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     import server as srv
-    renders_dir = tmp_path / "renders" / "scene1"
-    renders_dir.mkdir(parents=True)
-    monkeypatch.setattr(srv, "RENDERS_DIR", renders_dir)
+    scene_root = tmp_path
+    scene_dir = scene_root / "scene1"
+    (scene_dir / "renders").mkdir(parents=True)
+    monkeypatch.setattr(srv, "SCENES_ROOT", scene_root)
     srv.app.config["TESTING"] = True
     with srv.app.test_client() as c:
-        yield c, renders_dir
+        yield c, scene_dir / "renders"
 
 
-def _post_frame(client, *, name, index, view=None, pose=None):
+def _post_frame(client, *, name, index, scene="scene1", view=None, pose=None):
     body = {
         "name": name,
         "index": index,
@@ -34,7 +35,7 @@ def _post_frame(client, *, name, index, view=None, pose=None):
     if view is not None:
         body["view"] = view
     return client.post(
-        "/api/render_frame",
+        f"/api/render_frame?scene={scene}",
         data=json.dumps(body),
         content_type="application/json",
     )
