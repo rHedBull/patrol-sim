@@ -37,6 +37,17 @@ def view_canonical_key(v: View) -> tuple[Side, int]:
     return (v.side, int(round(v.tilt)) or 0)
 
 
+def views_in_traversal_direction(views: list[View], *, reversed_: bool) -> list[View]:
+    """Mirror `side` when traversing the edge against its canonical (a < b) order.
+    Tilt is preserved (gravity is direction-independent)."""
+    if not reversed_:
+        return list(views)
+    return [
+        View(side="right" if v.side == "left" else "left", tilt=v.tilt)
+        for v in views
+    ]
+
+
 @dataclass
 class EdgeMeta:
     render: bool = True

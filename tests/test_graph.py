@@ -225,3 +225,17 @@ class TestEdgeMetaRoundTrip:
         g = NavGraph.from_dict(legacy)
         meta = g.get_edge_meta("A", "B")
         assert meta.render is True and meta.views == []
+
+
+class TestDirectionMirror:
+    def test_views_in_direction_forward_returns_as_stored(self):
+        from navigation.graph import views_in_traversal_direction
+        views = [View("left", 10), View("right", -20)]
+        out = views_in_traversal_direction(views, reversed_=False)
+        assert [(v.side, v.tilt) for v in out] == [("left", 10), ("right", -20)]
+
+    def test_views_in_direction_reverse_mirrors_side_keeps_tilt(self):
+        from navigation.graph import views_in_traversal_direction
+        views = [View("left", 10), View("right", -20)]
+        out = views_in_traversal_direction(views, reversed_=True)
+        assert [(v.side, v.tilt) for v in out] == [("right", 10), ("left", -20)]
