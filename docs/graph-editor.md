@@ -38,7 +38,19 @@ Select a node (click it), then press **Delete** or **Backspace**. All connected 
 
 Edges are always bidirectional. Duplicate edges are ignored.
 
-Edges render as thin grey tubes at node height.
+Edges render as thin grey tubes at node height. In **Connect Nodes** mode, clicking an edge deletes it. In normal edit mode, clicking an edge **selects** it and opens the Edge Panel below the toolbar.
+
+### Edge Panel (per-edge render options)
+
+Selecting an edge in edit mode opens the Edge Panel:
+
+- **Render this edge** — when unticked, the route still traverses this edge but no frames are captured along it. Skipped edges render as faded grey tubes.
+- **Views** — up to 3 extra side-looking captures per arc-length sample on the edge. Each view picks a `side` (left / right — always 90° to the flight direction) and a `tilt` in degrees (`+` = up, `−` = down, 0 = horizontal). Edges with views render as cyan.
+- **Delete** — removes the edge.
+
+View frames are saved as `frame_NNNN__L+10.png` / `frame_NNNN__R-30.png` (sign always shown), one extra image per view per sample, alongside the forward `frame_NNNN.png`. When an edge is traversed in reverse, `side` is mirrored automatically so the camera looks at the same physical side of the path.
+
+Edge metadata persists with **Save Graph**.
 
 ### Setting the start node
 
