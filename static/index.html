@@ -1621,7 +1621,7 @@
                     clearTimeout(pending.timer);
                     _pendingCaptures.delete(msg.id);
                     if (msg.error) pending.reject(new Error(msg.error));
-                    else pending.resolve({ dataUrl: msg.dataUrl, stats: msg.stats });
+                    else pending.resolve({ dataUrl: msg.dataUrl, stats: msg.stats, intrinsics: msg.intrinsics });
                 }
             }
         });
@@ -2557,11 +2557,20 @@
                             stableFrames: preset.stableFrames,
                             parentTimeoutMs: preset.maxMs + 8000,
                         });
+                        // Eye is +1m above the robot (see sendPotreePose);
+                        // target derives from yaw + pitch.
+                        const eyeX = s.pos.x, eyeY = s.pos.y + 1.0, eyeZ = s.pos.z;
+                        const cy = Math.cos(pitch), sy = Math.sin(pitch);
+                        const fx = -Math.sin(yaw) * cy;
+                        const fy = sy;
+                        const fz = -Math.cos(yaw) * cy;
                         const pose = {
-                            position: [s.pos.x, s.pos.y, s.pos.z],
+                            position: [eyeX, eyeY, eyeZ],
+                            target: [eyeX + fx, eyeY + fy, eyeZ + fz],
                             yaw, pitch,
                             arc_length: s.arcLen,
                             quality,
+                            intrinsics: cap.intrinsics || null,
                         };
                         if (sideOpt) {
                             pose.side = sideOpt;
@@ -2804,7 +2813,7 @@
                     sendOrbitPose(cam, tip);
                     await new Promise(r => setTimeout(r, 80));
 
-                    let dataUrl, captureStats = null;
+                    let dataUrl, captureStats = null, capIntrinsics = null;
                     try {
                         const cap = await captureFromPotree({
                             maxMs: preset.maxMs,
@@ -2813,6 +2822,7 @@
                         });
                         dataUrl = cap.dataUrl;
                         captureStats = cap.stats || null;
+                        capIntrinsics = cap.intrinsics || null;
                     } catch (e) {
                         console.error('orbit capture failed at sample', i, e);
                         progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
@@ -2828,6 +2838,7 @@
                         height_m: p.h,
                         node_id: node.id,
                         quality,
+                        intrinsics: capIntrinsics,
                     };
                     const r = await fetch('/api/render_frame', {
                         method: 'POST',
