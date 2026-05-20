@@ -307,15 +307,20 @@ def plan_path():
 def save_render_frame():
     """Persist a single rendered frame coming from the in-page renderer.
 
-    Body: ``{name, index, png_b64, pose}``. Writes
-    ``renders/<scene>/<name>/frame_NNNN.png`` and appends to
-    ``manifest.json`` in the same directory.
+    Body: ``{name, index, view?, png_b64, pose}``. ``view`` defaults to
+    ``"forward"``; non-forward views are written to
+    ``frame_NNNN__<view>.png``. Dedupe key is ``(index, view)``; legacy
+    entries without ``view`` are normalized to ``forward`` in-place on
+    every write.
     """
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
     if not name or "/" in name or ".." in name:
         return jsonify({"error": "Invalid render name"}), 400
     index = int(data.get("index", 0))
+    view = (data.get("view") or "forward").strip()
+    if "/" in view or ".." in view or "\\" in view:
+        return jsonify({"error": "Invalid view name"}), 400
     png_b64 = data.get("png_b64") or ""
     if "," in png_b64:
         png_b64 = png_b64.split(",", 1)[1]
@@ -325,7 +330,8 @@ def save_render_frame():
     out_dir = RENDERS_DIR / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    frame_path = out_dir / f"frame_{index:04d}.png"
+    suffix = "" if view == "forward" else f"__{view}"
+    frame_path = out_dir / f"frame_{index:04d}{suffix}.png"
     frame_path.write_bytes(base64.b64decode(png_b64))
 
     manifest_path = out_dir / "manifest.json"
@@ -335,12 +341,18 @@ def save_render_frame():
             manifest = json.loads(manifest_path.read_text())
         except Exception:
             pass
+
+    for f in manifest.get("frames", []):
+        f.setdefault("view", "forward")
+
     pose = data.get("pose") or {}
-    entry = {"index": index, "file": frame_path.name, **pose}
-    # Replace by index if it already exists
-    manifest["frames"] = [f for f in manifest.get("frames", []) if f.get("index") != index]
+    entry = {"index": index, "view": view, "file": frame_path.name, **pose}
+    manifest["frames"] = [
+        f for f in manifest.get("frames", [])
+        if not (f.get("index") == index and f.get("view") == view)
+    ]
     manifest["frames"].append(entry)
-    manifest["frames"].sort(key=lambda f: f["index"])
+    manifest["frames"].sort(key=lambda f: (f["index"], f.get("view", "forward")))
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     return jsonify({"ok": True, "path": str(frame_path)})
