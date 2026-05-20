@@ -97,7 +97,7 @@ Changes:
 
 - Forward frame keeps the existing name: `frame_NNNN.png`.
 - View frames append `__<viewcode>` where viewcode is `L<sign><tilt>` or `R<sign><tilt>` (sign always emitted, tilt is `|tilt|` rounded to nearest integer, no zero-padding): `frame_0042__L+10.png`, `frame_0042__R-45.png`, `frame_0042__L+0.png`. The sign of `0` is canonicalized to `+`.
-- **Duplicate views are rejected.** `set_edge_views` and `from_dict` validate that `(side, round(tilt))` is unique within an edge's views list; collisions error rather than silently overwriting frames.
+- **Duplicate views are rejected.** `set_edge_views` and `from_dict` validate that the canonicalized key `(side, signed_round(tilt))` — with `-0` normalized to `0` — is unique within an edge's views list; collisions error rather than silently overwriting frames. The same canonicalization is used for the filename viewcode, so dedupe and on-disk uniqueness agree by construction.
 - Manifest entries include:
   ```json
   { "index": 42, "file": "frame_0042__L+10.png",
@@ -158,5 +158,5 @@ Frontend / integration verified manually in the browser per `browser-verificatio
 ## Risks / open questions
 
 - **Segment-to-edge mapping precision.** `arcLengthSample` interpolates across segment boundaries; samples landing exactly on a node belong to both adjoining edges. Convention: a sample at arc-length `s` belongs to the segment whose `cum[seg] <= s < cum[seg+1]`. The very last sample (at `s = total`) is assigned to the final segment. Documented in code; deterministic and matches how `seg` is already tracked.
-- **Edge-click ergonomics.** Today clicking an edge deletes it. Moving delete behind selection on edges with metadata is a small UX change; we keep direct-delete for plain edges to avoid regressing the common path.
+- **Edge-click ergonomics.** Today clicking an edge deletes it. New behavior unifies all edge interactions behind selection: a click selects, and delete happens via the Edge Panel button. This costs one extra click for the previously-instant delete gesture, but eliminates a mode-dependent affordance.
 - **Manifest sparseness.** Downstream tooling that assumes contiguous `index` would break. The existing manifest already supports gaps in principle (entries are sorted by index); we'll grep the repo for any consumer that assumes contiguity and adjust or flag.
