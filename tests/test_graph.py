@@ -114,21 +114,17 @@ class TestEdgeMeta:
         assert meta.render is True
         assert meta.views == []
 
-    def test_view_accepts_left_right_and_tilt_in_range(self):
-        v1 = View(side="left", tilt=10)
-        v2 = View(side="right", tilt=-45.0)
-        assert v1.side == "left" and v1.tilt == 10
-        assert v2.side == "right" and v2.tilt == -45.0
+    def test_view_accepts_roll_in_range(self):
+        v1 = View(roll_deg=0)
+        v2 = View(roll_deg=359.5)
+        assert v1.roll_deg == 0
+        assert v2.roll_deg == 359.5
 
-    def test_view_rejects_bad_side(self):
+    def test_view_rejects_roll_out_of_range(self):
         with pytest.raises(ValueError):
-            View(side="up", tilt=0)
-
-    def test_view_rejects_tilt_out_of_range(self):
+            View(roll_deg=-0.1)
         with pytest.raises(ValueError):
-            View(side="left", tilt=91)
-        with pytest.raises(ValueError):
-            View(side="right", tilt=-90.0001)
+            View(roll_deg=360.0)
 
 
 class TestEdgeMetaApi:
@@ -155,25 +151,25 @@ class TestEdgeMetaApi:
         g = self._g()
         with pytest.raises(ValueError):
             g.set_edge_views("A", "B", [
-                View("left", 0), View("right", 0),
-                View("left", 30), View("right", 30),
+                View(roll_deg=0), View(roll_deg=90),
+                View(roll_deg=180), View(roll_deg=270),
             ])
 
     def test_set_edge_views_rejects_duplicate_canonical_key(self):
         g = self._g()
         with pytest.raises(ValueError):
-            g.set_edge_views("A", "B", [View("left", 0.4), View("left", -0.4)])
+            g.set_edge_views("A", "B", [View(roll_deg=90.4), View(roll_deg=89.6)])
 
     def test_set_edge_views_on_missing_edge_raises(self):
         g = self._g()
         with pytest.raises(KeyError):
-            g.set_edge_views("A", "C", [View("left", 0)])
+            g.set_edge_views("A", "C", [View(roll_deg=0)])
 
     def test_views_canonical_key_helper(self):
         from navigation.graph import view_canonical_key
-        assert view_canonical_key(View("left", 0.4)) == ("left", 0)
-        assert view_canonical_key(View("left", -0.4)) == ("left", 0)
-        assert view_canonical_key(View("right", -45)) == ("right", -45)
+        assert view_canonical_key(View(roll_deg=89.6)) == 90
+        assert view_canonical_key(View(roll_deg=90.4)) == 90
+        assert view_canonical_key(View(roll_deg=359.6)) == 0  # wraps
 
 
 class TestEdgeMetaRoundTrip:
@@ -204,15 +200,15 @@ class TestEdgeMetaRoundTrip:
         g.add_node("A", (0, 0, 0))
         g.add_node("B", (1, 0, 0))
         g.add_edge("A", "B")
-        g.set_edge_views("A", "B", [View("left", 10), View("right", -45)])
+        g.set_edge_views("A", "B", [View(roll_deg=10), View(roll_deg=270)])
         g2 = self._round_trip(g)
         views = g2.get_edge_meta("A", "B").views
-        assert [(v.side, v.tilt) for v in views] == [("left", 10), ("right", -45)]
+        assert [v.roll_deg for v in views] == [10, 270]
 
     def test_from_dict_validates_bad_meta(self):
         bad = {
             "nodes": [{"id": "A", "position": [0, 0, 0]}, {"id": "B", "position": [1, 0, 0]}],
-            "edges": [{"from": "A", "to": "B", "views": [{"side": "up", "tilt": 0}]}],
+            "edges": [{"from": "A", "to": "B", "views": [{"roll_deg": 400}]}],
         }
         with pytest.raises(ValueError):
             NavGraph.from_dict(bad)
@@ -230,12 +226,13 @@ class TestEdgeMetaRoundTrip:
 class TestDirectionMirror:
     def test_views_in_direction_forward_returns_as_stored(self):
         from navigation.graph import views_in_traversal_direction
-        views = [View("left", 10), View("right", -20)]
+        views = [View(roll_deg=90), View(roll_deg=45)]
         out = views_in_traversal_direction(views, reversed_=False)
-        assert [(v.side, v.tilt) for v in out] == [("left", 10), ("right", -20)]
+        assert [v.roll_deg for v in out] == [90, 45]
 
-    def test_views_in_direction_reverse_mirrors_side_keeps_tilt(self):
+    def test_views_in_direction_reverse_mirrors_roll(self):
         from navigation.graph import views_in_traversal_direction
-        views = [View("left", 10), View("right", -20)]
+        # 90 (right) → 270 (left); 45 → 315; 0 and 180 invariant
+        views = [View(roll_deg=90), View(roll_deg=45), View(roll_deg=0), View(roll_deg=180)]
         out = views_in_traversal_direction(views, reversed_=True)
-        assert [(v.side, v.tilt) for v in out] == [("right", 10), ("left", -20)]
+        assert [v.roll_deg for v in out] == [270, 315, 0, 180]

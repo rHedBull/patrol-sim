@@ -290,7 +290,7 @@ class TestRenderFrameViews:
         })
         r = s.client.post("/api/render_frame" + _qs(s.scene), json={
             "name": "run1", "index": 0, "view": "L+10",
-            "png_b64": _png_b64(), "pose": {"yaw": 0.0, "side": "left", "tilt": 10},
+            "png_b64": _png_b64(), "pose": {"yaw": 0.0, "roll_deg": 270},
         })
         assert r.status_code == 200
         out = s.scenes_root / s.scene / "renders" / "run1"

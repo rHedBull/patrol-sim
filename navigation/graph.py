@@ -7,7 +7,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 
 @dataclass
@@ -16,36 +16,35 @@ class Node:
     position: tuple[float, float, float]
 
 
-Side = Literal["left", "right"]
-
-
 @dataclass(frozen=True)
 class View:
-    side: Side
-    tilt: float  # degrees; 0 = horizontal, +up, -down
+    """A per-edge aux view defined as a rotation around the edge axis.
+
+    `roll_deg` is the angle (in degrees, [0, 360)) of the camera look
+    direction on the plane perpendicular to the edge's traversal direction.
+    0° points along world-up projected onto that plane; 90° points "right"
+    of traversal; 180° points down; 270° points "left"."""
+
+    roll_deg: float
 
     def __post_init__(self) -> None:
-        if self.side not in ("left", "right"):
-            raise ValueError(f"View.side must be 'left' or 'right', got {self.side!r}")
-        if not (-90.0 <= float(self.tilt) <= 90.0):
-            raise ValueError(f"View.tilt must be in [-90, 90], got {self.tilt}")
+        if not (0.0 <= float(self.roll_deg) < 360.0):
+            raise ValueError(f"View.roll_deg must be in [0, 360), got {self.roll_deg}")
 
 
-def view_canonical_key(v: View) -> tuple[Side, int]:
-    """Stable (side, signed_int_tilt) key used for dedupe + filenames.
-    `-0` is normalized to `0` by int rounding."""
-    return (v.side, int(round(v.tilt)) or 0)
+def view_canonical_key(v: View) -> int:
+    """Stable integer roll key used for dedupe + filenames."""
+    return int(round(v.roll_deg)) % 360
 
 
 def views_in_traversal_direction(views: list[View], *, reversed_: bool) -> list[View]:
-    """Mirror `side` when traversing the edge against its canonical (a < b) order.
-    Tilt is preserved (gravity is direction-independent)."""
+    """Mirror roll across the world-up axis when traversing the edge against
+    its canonical (a < b) order. Reflection sends roll → (360 - roll) % 360:
+    `roll=90` (right of forward travel) becomes `roll=270` (left of reversed
+    travel); `roll=0` (up) and `roll=180` (down) are invariant."""
     if not reversed_:
         return list(views)
-    return [
-        View(side="right" if v.side == "left" else "left", tilt=v.tilt)
-        for v in views
-    ]
+    return [View(roll_deg=(360.0 - v.roll_deg) % 360.0) for v in views]
 
 
 @dataclass
@@ -136,7 +135,7 @@ class NavGraph:
         self._require_edge(a, b)
         if len(views) > 3:
             raise ValueError(f"At most 3 views per edge, got {len(views)}")
-        seen: set[tuple[Side, int]] = set()
+        seen: set[int] = set()
         for v in views:
             k = view_canonical_key(v)
             if k in seen:
@@ -212,7 +211,7 @@ class NavGraph:
         if meta.render is False:
             entry["render"] = False
         if meta.views:
-            entry["views"] = [{"side": v.side, "tilt": v.tilt} for v in meta.views]
+            entry["views"] = [{"roll_deg": v.roll_deg} for v in meta.views]
         return entry
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,7 +249,7 @@ class NavGraph:
                 if "render" in edge:
                     graph.set_edge_render(a, b, bool(edge["render"]))
                 if "views" in edge:
-                    views = [View(side=v["side"], tilt=float(v["tilt"])) for v in edge["views"]]
+                    views = [View(roll_deg=float(v["roll_deg"])) for v in edge["views"]]
                     graph.set_edge_views(a, b, views)
             else:
                 graph.add_edge(edge[0], edge[1])

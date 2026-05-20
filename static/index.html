@@ -634,10 +634,11 @@
 
         // Graph data: nodes and edges
         let graphNodes = [];       // [{id, position: [x,y,z]}]
-        let graphEdges = [];       // [{from, to, render?: bool, views?: [{side, tilt}]}]
+        let graphEdges = [];       // [{from, to, render?: bool, views?: [{roll_deg}]}]
         let selectedEdgeKey = null;
         let graphNodeMeshes = {};  // id -> THREE.Mesh
         let graphEdgeLines = [];   // THREE.Line objects in scene
+        let graphViewCones = [];   // THREE.Mesh cone handles for per-edge views
         let startNodeId = null;    // designated start node
 
         // Robot state
@@ -1133,7 +1134,16 @@
         let pathHighlightLines = [];
 
         const NODE_HEIGHT = 0.5;  // default lift above floor for new nodes
-        const EDGE_RADIUS = 0.02; // tube radius for edges
+        const EDGE_RADIUS = 0.05; // tube radius for edges (thicker = easier to click)
+        const VIEW_CONE_RADIUS = 0.04;
+        const VIEW_CONE_LENGTH = 0.25;
+        const edgeMaterialSkippedDashed = new THREE.LineDashedMaterial({
+            color: 0x888888, dashSize: 0.15, gapSize: 0.10, transparent: true, opacity: 0.6,
+        });
+        const edgeMaterialSkippedSelectedDashed = new THREE.LineDashedMaterial({
+            color: 0xffaa00, dashSize: 0.15, gapSize: 0.10, transparent: true, opacity: 0.95,
+        });
+        const viewConeMaterial = new THREE.MeshBasicMaterial({ color: 0x55ddee });
 
         // Reusable raycaster for ground sampling — separate from the
         // global `raycaster` so we don't trample mouse-pick state.
@@ -1166,6 +1176,57 @@
             return y;
         }
 
+        // ── Edge view geometry helpers ──────────────────────────────
+        // Build the edge-local frame: forward (traversal dir), up_perp
+        // (world-up projected onto plane ⟂ forward), right_perp.
+        // Degenerate near-vertical edges fall back to +X as up_perp.
+        function _edgeFrame(fromVec3, toVec3) {
+            const forward = toVec3.clone().sub(fromVec3).normalize();
+            const worldUp = new THREE.Vector3(0, 1, 0);
+            let upPerp;
+            if (Math.abs(worldUp.dot(forward)) > 0.99) {
+                upPerp = new THREE.Vector3(1, 0, 0);
+                upPerp.sub(forward.clone().multiplyScalar(forward.dot(upPerp))).normalize();
+            } else {
+                upPerp = worldUp.clone().sub(forward.clone().multiplyScalar(worldUp.dot(forward))).normalize();
+            }
+            const rightPerp = forward.clone().cross(upPerp).normalize();
+            return { forward, upPerp, rightPerp };
+        }
+
+        // Map a roll_deg around the edge axis to a unit look direction.
+        // 0° = upPerp, 90° = rightPerp, 180° = -upPerp, 270° = -rightPerp.
+        function _rollToLookDir(rollDeg, frame) {
+            const r = (rollDeg * Math.PI) / 180.0;
+            return frame.upPerp.clone().multiplyScalar(Math.cos(r))
+                .add(frame.rightPerp.clone().multiplyScalar(Math.sin(r)));
+        }
+
+        // Inverse: given a vector v in the perpendicular plane, recover roll_deg.
+        function _lookDirToRoll(v, frame) {
+            const x = v.dot(frame.upPerp);
+            const y = v.dot(frame.rightPerp);
+            let deg = Math.atan2(y, x) * 180.0 / Math.PI;
+            return ((deg % 360) + 360) % 360;
+        }
+
+        function _makeViewCone(midVec3, lookDir, edgeFrom, edgeTo, viewIndex) {
+            const coneGeom = new THREE.ConeGeometry(VIEW_CONE_RADIUS, VIEW_CONE_LENGTH, 12);
+            const cone = new THREE.Mesh(coneGeom, viewConeMaterial);
+            // ConeGeometry default axis is +Y; we want the cone tip to point along lookDir.
+            // Translate up by half-length so the base sits at the midpoint and the tip extends out.
+            coneGeom.translate(0, VIEW_CONE_LENGTH / 2, 0);
+            cone.position.copy(midVec3);
+            cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), lookDir.clone().normalize());
+            cone.userData = {
+                kind: 'edgeView',
+                edgeFrom,
+                edgeTo,
+                viewIndex,
+            };
+            return cone;
+        }
+
         function renderGraph() {
             // Clear existing graph visuals
             while (graphGroup.children.length > 0) {
@@ -1173,6 +1234,7 @@
             }
             graphNodeMeshes = {};
             graphEdgeLines = [];
+            graphViewCones = [];
 
             // Render nodes with posts
             for (const node of graphNodes) {
@@ -1219,27 +1281,59 @@
                 const length = dir.length();
                 const mid = from.clone().add(to).multiplyScalar(0.5);
 
-                const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
-                let mat;
-                if (selectedEdgeKey && _edgeKey(edge) === selectedEdgeKey) {
-                    mat = edgeMaterialSelected;
-                } else if (edge.render === false) {
-                    mat = edgeMaterialSkipped;
-                } else if (edge.views && edge.views.length > 0) {
-                    mat = edgeMaterialWithViews;
+                const isSelected = selectedEdgeKey && _edgeKey(edge) === selectedEdgeKey;
+                if (edge.render === false) {
+                    // Render-skipped edges: dashed line, no tube. Selected variant keeps the
+                    // dashing but tints orange. The faded line stays pickable via the
+                    // edge selection raycast (we still record an invisible tube below).
+                    const lineGeom = new THREE.BufferGeometry().setFromPoints([from, to]);
+                    const line = new THREE.Line(lineGeom, isSelected ? edgeMaterialSkippedSelectedDashed : edgeMaterialSkippedDashed);
+                    line.computeLineDistances();
+                    line.userData.edgeFrom = edge.from;
+                    line.userData.edgeTo = edge.to;
+                    graphGroup.add(line);
+
+                    // Invisible thicker tube for picking (so skipped edges remain clickable)
+                    const pickGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
+                    const pickMat = new THREE.MeshBasicMaterial({ visible: false });
+                    const pickCyl = new THREE.Mesh(pickGeom, pickMat);
+                    pickCyl.position.copy(mid);
+                    pickCyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+                    pickCyl.userData.edgeFrom = edge.from;
+                    pickCyl.userData.edgeTo = edge.to;
+                    graphGroup.add(pickCyl);
+                    graphEdgeLines.push(pickCyl);
                 } else {
-                    mat = edgeMaterialDefault;
+                    const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
+                    let mat;
+                    if (isSelected) {
+                        mat = edgeMaterialSelected;
+                    } else if (edge.views && edge.views.length > 0) {
+                        mat = edgeMaterialWithViews;
+                    } else {
+                        mat = edgeMaterialDefault;
+                    }
+                    const cyl = new THREE.Mesh(cylGeom, mat);
+                    cyl.position.copy(mid);
+                    cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+                    cyl.userData.edgeFrom = edge.from;
+                    cyl.userData.edgeTo = edge.to;
+                    graphGroup.add(cyl);
+                    graphEdgeLines.push(cyl);
                 }
-                const cyl = new THREE.Mesh(cylGeom, mat);
-                cyl.position.copy(mid);
-                // Align cylinder along the direction
-                cyl.quaternion.setFromUnitVectors(
-                    new THREE.Vector3(0, 1, 0), dir.clone().normalize()
-                );
-                cyl.userData.edgeFrom = edge.from;
-                cyl.userData.edgeTo = edge.to;
-                graphGroup.add(cyl);
-                graphEdgeLines.push(cyl);
+
+                // Cone glyphs: one per view, anchored at edge midpoint, pointing
+                // radially out along the look direction implied by roll_deg.
+                if (edge.views && edge.views.length > 0) {
+                    const frame = _edgeFrame(from, to);
+                    for (let vi = 0; vi < edge.views.length; vi++) {
+                        const view = edge.views[vi];
+                        const look = _rollToLookDir(view.roll_deg, frame);
+                        const cone = _makeViewCone(mid, look, edge.from, edge.to, vi);
+                        graphGroup.add(cone);
+                        graphViewCones.push(cone);
+                    }
+                }
             }
 
             updateNodeVisuals();
@@ -1743,24 +1837,25 @@
             const row = document.createElement('div');
             row.style.cssText = 'display:flex; gap:4px; align-items:center; margin-top:2px;';
 
-            const sel = document.createElement('select');
-            sel.className = 'ev-side';
-            sel.dataset.i = String(i);
-            for (const opt of ['left', 'right']) {
-                const o = document.createElement('option');
-                o.value = opt;
-                o.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
-                if (view.side === opt) o.selected = true;
-                sel.appendChild(o);
-            }
+            const label = document.createElement('span');
+            label.textContent = 'roll';
+            label.style.opacity = '0.7';
 
-            const tilt = document.createElement('input');
-            tilt.type = 'number';
-            tilt.className = 'ev-tilt';
-            tilt.dataset.i = String(i);
-            tilt.value = String(view.tilt);
-            tilt.min = '-90'; tilt.max = '90'; tilt.step = '5';
-            tilt.style.width = '64px';
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.className = 'ev-roll-slider';
+            slider.dataset.i = String(i);
+            slider.min = '0'; slider.max = '359'; slider.step = '1';
+            slider.value = String(Math.round(view.roll_deg));
+            slider.style.width = '120px';
+
+            const num = document.createElement('input');
+            num.type = 'number';
+            num.className = 'ev-roll-num';
+            num.dataset.i = String(i);
+            num.min = '0'; num.max = '359'; num.step = '1';
+            num.value = String(Math.round(view.roll_deg));
+            num.style.width = '56px';
 
             const unit = document.createElement('span');
             unit.textContent = '°';
@@ -1771,8 +1866,9 @@
             del.dataset.i = String(i);
             del.textContent = '×';
 
-            row.appendChild(sel);
-            row.appendChild(tilt);
+            row.appendChild(label);
+            row.appendChild(slider);
+            row.appendChild(num);
             row.appendChild(unit);
             row.appendChild(del);
             return row;
@@ -1801,26 +1897,35 @@
         edgeAddViewBtn.addEventListener('click', () => {
             const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
             if ((e.views || []).length >= 3) return;
-            e.views = (e.views || []).concat([{ side: 'left', tilt: 0 }]);
+            // Default roll = 90° (right of travel). If 90° is taken, try 270°, then 0°.
+            const used = new Set((e.views || []).map(v => Math.round(v.roll_deg) % 360));
+            const candidates = [90, 270, 0, 180, 45, 135, 225, 315];
+            const roll = candidates.find(c => !used.has(c)) ?? 90;
+            e.views = (e.views || []).concat([{ roll_deg: roll }]);
             renderEdgeViewsList(e);
             renderGraph();
         });
 
-        edgeViewsContainer.addEventListener('change', (ev) => {
+        edgeViewsContainer.addEventListener('input', (ev) => {
             const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
             const t = ev.target;
             const i = parseInt(t.dataset.i, 10);
             if (Number.isNaN(i) || !e.views[i]) return;
-            if (t.classList.contains('ev-side')) {
-                e.views[i].side = t.value;
-            } else if (t.classList.contains('ev-tilt')) {
+            if (t.classList.contains('ev-roll-slider') || t.classList.contains('ev-roll-num')) {
                 let n = parseFloat(t.value);
                 if (!Number.isFinite(n)) n = 0;
-                n = Math.max(-90, Math.min(90, n));
-                e.views[i].tilt = n;
-                t.value = String(n);
+                n = ((Math.round(n) % 360) + 360) % 360;
+                e.views[i].roll_deg = n;
+                // Mirror the value into the sibling control.
+                const row = t.parentElement;
+                if (row) {
+                    const other = t.classList.contains('ev-roll-slider')
+                        ? row.querySelector('.ev-roll-num')
+                        : row.querySelector('.ev-roll-slider');
+                    if (other) other.value = String(n);
+                }
+                renderGraph();
             }
-            renderGraph();
         });
 
         edgeViewsContainer.addEventListener('click', (ev) => {
@@ -1891,9 +1996,46 @@
         let dragStartY = null;        // node Y at drag start (for vertical drag)
         const DRAG_THRESHOLD = 5; // pixels before a click becomes a drag
 
+        // View-cone drag state. Selected edge's view cones become draggable
+        // gizmos that rotate around the edge axis to set roll_deg.
+        let draggingViewCone = null; // { edgeKey, viewIndex, frame, midpoint }
+
         orbitContainer.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return; // left button only
             mouseDownPos = { x: e.clientX, y: e.clientY };
+
+            // View-cone handle takes priority over everything else so the
+            // gizmo never gets stolen by node/edge picks behind it.
+            if (editMode && !connectMode && selectedEdgeKey && graphViewCones.length > 0) {
+                getMousePosition(e, orbitContainer);
+                raycaster.setFromCamera(mouse, orbitCamera);
+                const hits = raycaster.intersectObjects(graphViewCones, false);
+                if (hits.length > 0) {
+                    const cone = hits[0].object;
+                    const ud = cone.userData;
+                    const edge = _findEdgeByKey(_edgeKey({ from: ud.edgeFrom, to: ud.edgeTo }));
+                    if (edge) {
+                        const canonFrom = edge.from < edge.to ? edge.from : edge.to;
+                        const canonTo = edge.from < edge.to ? edge.to : edge.from;
+                        const a = graphNodes.find(n => n.id === canonFrom);
+                        const b = graphNodes.find(n => n.id === canonTo);
+                        if (a && b) {
+                            const av = new THREE.Vector3(a.position[0], a.position[1] + NODE_HEIGHT, a.position[2]);
+                            const bv = new THREE.Vector3(b.position[0], b.position[1] + NODE_HEIGHT, b.position[2]);
+                            const mid = av.clone().add(bv).multiplyScalar(0.5);
+                            draggingViewCone = {
+                                edgeKey: _edgeKey(edge),
+                                viewIndex: ud.viewIndex,
+                                frame: _edgeFrame(av, bv),
+                                midpoint: mid,
+                            };
+                            isDragging = true;
+                            orbitControls.enabled = false;
+                            return;
+                        }
+                    }
+                }
+            }
 
             // Orbit-mode start handle takes precedence over node picking
             // so the handle never gets "lost" behind the tip sphere.
@@ -1921,6 +2063,39 @@
         });
 
         orbitContainer.addEventListener('mousemove', (e) => {
+            // View-cone rotation: project cursor ray onto the plane through
+            // the edge midpoint perpendicular to the edge forward axis, then
+            // recover roll_deg from the offset's up_perp / right_perp components.
+            if (draggingViewCone) {
+                const { frame, midpoint, edgeKey, viewIndex } = draggingViewCone;
+                getMousePosition(e, orbitContainer);
+                raycaster.setFromCamera(mouse, orbitCamera);
+                const ro = raycaster.ray.origin;
+                const rd = raycaster.ray.direction;
+                // Intersect ray with plane (point = midpoint, normal = forward).
+                const denom = rd.dot(frame.forward);
+                if (Math.abs(denom) < 1e-6) return;
+                const t = midpoint.clone().sub(ro).dot(frame.forward) / denom;
+                if (t < 0) return; // plane is behind camera
+                const hit = ro.clone().add(rd.clone().multiplyScalar(t));
+                const offset = hit.sub(midpoint);
+                if (offset.lengthSq() < 1e-8) return;
+                const roll = _lookDirToRoll(offset, frame);
+                const edge = _findEdgeByKey(edgeKey);
+                if (!edge || !edge.views || !edge.views[viewIndex]) return;
+                edge.views[viewIndex].roll_deg = Math.round(roll);
+                // Update the panel slider/number in place.
+                const rows = edgeViewsContainer.children;
+                if (rows[viewIndex]) {
+                    const slider = rows[viewIndex].querySelector('.ev-roll-slider');
+                    const num = rows[viewIndex].querySelector('.ev-roll-num');
+                    if (slider) slider.value = String(Math.round(roll));
+                    if (num) num.value = String(Math.round(roll));
+                }
+                renderGraph();
+                return;
+            }
+
             // Drag the orbit start handle around the circle. We solve for
             // the cursor's intersection with the horizontal plane at
             // y = tip_y + h, then compute theta from the tip in (x,z).
@@ -2013,6 +2188,14 @@
 
         orbitContainer.addEventListener('mouseup', (e) => {
             if (e.button !== 0) return;
+
+            if (draggingViewCone) {
+                draggingViewCone = null;
+                isDragging = false;
+                mouseDownPos = null;
+                orbitControls.enabled = true;
+                return;
+            }
 
             if (draggingStartHandle) {
                 draggingStartHandle = false;
@@ -2538,13 +2721,17 @@
                         continue;
                     }
 
-                    const reversedTraversal = a !== meta.canonical[0];
-                    const mirroredViews = meta.views.map(v => ({
-                        side: reversedTraversal ? (v.side === 'left' ? 'right' : 'left') : v.side,
-                        tilt: v.tilt,
-                    }));
+                    // Build the canonical edge frame so the captured look direction
+                    // is a world-space property of the edge — independent of which
+                    // way the robot happens to be walking. roll_deg is stored in
+                    // canonical orientation; the frame here uses canonical forward.
+                    const canonFrom = graphNodes.find(n => n.id === meta.canonical[0]);
+                    const canonTo = graphNodes.find(n => n.id === meta.canonical[1]);
+                    const _canonFromVec = canonFrom ? new THREE.Vector3(canonFrom.position[0], canonFrom.position[1] + NODE_HEIGHT, canonFrom.position[2]) : new THREE.Vector3();
+                    const _canonToVec = canonTo ? new THREE.Vector3(canonTo.position[0], canonTo.position[1] + NODE_HEIGHT, canonTo.position[2]) : new THREE.Vector3(1, 0, 0);
+                    const _frame = _edgeFrame(_canonFromVec, _canonToVec);
 
-                    async function captureAndPost({ yaw, pitch, viewCode, sideOpt, tiltOpt }) {
+                    async function captureAndPost({ yaw, pitch, viewCode, rollOpt }) {
                         robotPosition.set(s.pos.x, s.pos.y, s.pos.z);
                         robotYaw = yaw;
                         robotPitch = pitch;
@@ -2572,11 +2759,8 @@
                             quality,
                             intrinsics: cap.intrinsics || null,
                         };
-                        if (sideOpt) {
-                            pose.side = sideOpt;
-                            pose.tilt = tiltOpt;
-                            pose.yaw_offset_deg = sideOpt === 'left' ? -90 : 90;
-                            pose.pitch_offset_deg = tiltOpt;
+                        if (rollOpt !== undefined && rollOpt !== null) {
+                            pose.roll_deg = rollOpt;
                         }
                         const r = await fetch('/api/render_frame', {
                             method: 'POST',
@@ -2599,21 +2783,23 @@
                         continue;
                     }
 
-                    function _viewCode(side, tilt) {
-                        const t = Math.round(tilt);
-                        const sign = t < 0 ? '-' : '+';
-                        return `${side === 'left' ? 'L' : 'R'}${sign}${Math.abs(t)}`;
+                    function _viewCodeRoll(rollDeg) {
+                        return `R${String(Math.round(rollDeg)).padStart(3, '0')}`;
                     }
-                    for (const v of mirroredViews) {
-                        const yawOffset = (v.side === 'left' ? -Math.PI/2 : +Math.PI/2);
-                        const tiltRad = v.tilt * Math.PI / 180;
-                        const code = _viewCode(v.side, v.tilt);
+                    for (const v of meta.views) {
+                        const roll = ((Math.round(v.roll_deg) % 360) + 360) % 360;
+                        const look = _rollToLookDir(roll, _frame);
+                        // Convert lookDir → (yaw, pitch) for the existing camera pipeline.
+                        // Forward convention: f = (-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)).
+                        const pitchRad = Math.asin(Math.max(-1, Math.min(1, look.y)));
+                        const yawRad = Math.atan2(-look.x, -look.z);
+                        const code = _viewCodeRoll(roll);
                         try {
                             await captureAndPost({
-                                yaw: s.yaw + yawOffset,
-                                pitch: tiltRad,
+                                yaw: yawRad,
+                                pitch: pitchRad,
                                 viewCode: code,
-                                sideOpt: v.side, tiltOpt: v.tilt,
+                                rollOpt: roll,
                             });
                         } catch (e) {
                             console.error('view capture failed at sample', i, code, e);
@@ -3054,7 +3240,7 @@
                 const out = { from: e.from, to: e.to };
                 if (e.render === false) out.render = false;
                 if (e.views && e.views.length > 0) {
-                    out.views = e.views.map(v => ({ side: v.side, tilt: v.tilt }));
+                    out.views = e.views.map(v => ({ roll_deg: v.roll_deg }));
                 }
                 return out;
             });
