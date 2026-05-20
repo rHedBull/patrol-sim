@@ -2481,7 +2481,12 @@
                             arc_length: s.arcLen,
                             quality,
                         };
-                        if (sideOpt) { pose.side = sideOpt; pose.tilt = tiltOpt; }
+                        if (sideOpt) {
+                            pose.side = sideOpt;
+                            pose.tilt = tiltOpt;
+                            pose.yaw_offset_deg = sideOpt === 'left' ? -90 : 90;
+                            pose.pitch_offset_deg = tiltOpt;
+                        }
                         const r = await fetch('/api/render_frame', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
