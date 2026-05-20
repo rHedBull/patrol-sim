@@ -193,6 +193,17 @@ class NavGraph:
 
     # ── Serialization ────────────────────────────────────────────────
 
+    def _edge_to_dict(self, a: str, b: str) -> dict[str, Any]:
+        entry: dict[str, Any] = {"from": a, "to": b}
+        meta = self._edge_meta.get(self._edge_key(a, b))
+        if meta is None:
+            return entry
+        if meta.render is False:
+            entry["render"] = False
+        if meta.views:
+            entry["views"] = [{"side": v.side, "tilt": v.tilt} for v in meta.views]
+        return entry
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "nodes": [
@@ -200,7 +211,7 @@ class NavGraph:
                 for nid, node in self._nodes.items()
             ],
             "edges": [
-                {"from": a, "to": b}
+                self._edge_to_dict(a, b)
                 for a in self._edges
                 for b in self._edges[a]
                 if a < b  # store each bidirectional edge once
@@ -223,7 +234,13 @@ class NavGraph:
                 graph.add_node(nid, tuple(pos))
         for edge in data.get("edges", []):
             if isinstance(edge, dict):
-                graph.add_edge(edge["from"], edge["to"])
+                a, b = edge["from"], edge["to"]
+                graph.add_edge(a, b)
+                if "render" in edge:
+                    graph.set_edge_render(a, b, bool(edge["render"]))
+                if "views" in edge:
+                    views = [View(side=v["side"], tilt=float(v["tilt"])) for v in edge["views"]]
+                    graph.set_edge_views(a, b, views)
             else:
                 graph.add_edge(edge[0], edge[1])
         start = data.get("start_node")

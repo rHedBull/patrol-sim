@@ -174,3 +174,54 @@ class TestEdgeMetaApi:
         assert view_canonical_key(View("left", 0.4)) == ("left", 0)
         assert view_canonical_key(View("left", -0.4)) == ("left", 0)
         assert view_canonical_key(View("right", -45)) == ("right", -45)
+
+
+class TestEdgeMetaRoundTrip:
+    def _round_trip(self, g: NavGraph) -> NavGraph:
+        return NavGraph.from_dict(g.to_dict())
+
+    def test_default_meta_not_emitted_in_json(self):
+        g = NavGraph()
+        g.add_node("A", (0, 0, 0))
+        g.add_node("B", (1, 0, 0))
+        g.add_edge("A", "B")
+        d = g.to_dict()
+        edge = d["edges"][0]
+        assert "render" not in edge
+        assert "views" not in edge
+
+    def test_render_flag_round_trip(self):
+        g = NavGraph()
+        g.add_node("A", (0, 0, 0))
+        g.add_node("B", (1, 0, 0))
+        g.add_edge("A", "B")
+        g.set_edge_render("A", "B", False)
+        g2 = self._round_trip(g)
+        assert g2.get_edge_meta("A", "B").render is False
+
+    def test_views_round_trip(self):
+        g = NavGraph()
+        g.add_node("A", (0, 0, 0))
+        g.add_node("B", (1, 0, 0))
+        g.add_edge("A", "B")
+        g.set_edge_views("A", "B", [View("left", 10), View("right", -45)])
+        g2 = self._round_trip(g)
+        views = g2.get_edge_meta("A", "B").views
+        assert [(v.side, v.tilt) for v in views] == [("left", 10), ("right", -45)]
+
+    def test_from_dict_validates_bad_meta(self):
+        bad = {
+            "nodes": [{"id": "A", "position": [0, 0, 0]}, {"id": "B", "position": [1, 0, 0]}],
+            "edges": [{"from": "A", "to": "B", "views": [{"side": "up", "tilt": 0}]}],
+        }
+        with pytest.raises(ValueError):
+            NavGraph.from_dict(bad)
+
+    def test_from_dict_legacy_loads_with_defaults(self):
+        legacy = {
+            "nodes": [{"id": "A", "position": [0, 0, 0]}, {"id": "B", "position": [1, 0, 0]}],
+            "edges": [{"from": "A", "to": "B"}],
+        }
+        g = NavGraph.from_dict(legacy)
+        meta = g.get_edge_meta("A", "B")
+        assert meta.render is True and meta.views == []
