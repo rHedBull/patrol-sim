@@ -618,7 +618,7 @@
 
         // Graph data: nodes and edges
         let graphNodes = [];       // [{id, position: [x,y,z]}]
-        let graphEdges = [];       // [{from, to}]
+        let graphEdges = [];       // [{from, to, render?: bool, views?: [{side, tilt}]}]
         let graphNodeMeshes = {};  // id -> THREE.Mesh
         let graphEdgeLines = [];   // THREE.Line objects in scene
         let startNodeId = null;    // designated start node
@@ -1988,7 +1988,7 @@
             );
             if (exists) return;
 
-            const edgeData = { from: fromId, to: toId };
+            const edgeData = { from: fromId, to: toId, render: true, views: [] };
 
             try {
                 const response = await fetch('/api/graph/edge', {
@@ -2646,7 +2646,12 @@
                 if (response.ok) {
                     const data = await response.json();
                     graphNodes = data.nodes || [];
-                    graphEdges = data.edges || [];
+                    graphEdges = (data.edges || []).map(e => ({
+                        from: e.from,
+                        to: e.to,
+                        render: e.render !== false,
+                        views: Array.isArray(e.views) ? e.views.slice() : [],
+                    }));
                     startNodeId = data.start_node || null;
                     applyOrbitFromServer(data.orbit);
                     renderGraph();
@@ -2729,11 +2734,40 @@
             };
         }
 
+        function serializeEdges() {
+            return graphEdges.map(e => {
+                const out = { from: e.from, to: e.to };
+                if (e.render === false) out.render = false;
+                if (e.views && e.views.length > 0) {
+                    out.views = e.views.map(v => ({ side: v.side, tilt: v.tilt }));
+                }
+                return out;
+            });
+        }
+
         async function saveGraph() {
             const name = prompt('Graph name:', 'default');
             if (!name) return;
 
             try {
+                // Push current frontend graph state (including edge metadata) to the
+                // server so the next save reflects render/views edits made via the UI.
+                const graphPayload = {
+                    nodes: graphNodes.map(n => ({ id: n.id, position: n.position })),
+                    edges: serializeEdges(),
+                };
+                if (startNodeId) graphPayload.start_node = startNodeId;
+
+                const putResp = await fetch('/api/graph', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(graphPayload),
+                });
+                if (!putResp.ok) {
+                    console.error('Failed to sync graph before save:', await putResp.text());
+                    return;
+                }
+
                 const response = await fetch('/api/graph/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
