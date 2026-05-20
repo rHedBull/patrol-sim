@@ -2359,7 +2359,7 @@
                 };
                 const dx = b.x - a.x, dz = b.z - a.z;
                 const yaw = Math.atan2(-dx, -dz);
-                samples.push({ pos, yaw, arcLen: s });
+                samples.push({ pos, yaw, arcLen: s, seg });
             }
             return samples;
         }
@@ -2406,6 +2406,7 @@
             }
             const { path } = await resp.json();
             const positions = path.map(n => ({ x: n.position[0], y: n.position[1], z: n.position[2] }));
+            const pathIds = path.map(n => n.id);
             const samples = arcLengthSample(positions, spacing);
             if (samples.length === 0) { alert('Path too short'); return; }
 
@@ -2429,6 +2430,15 @@
             refreshPlanUI();
             const t0 = performance.now();
             try {
+                const edgeMetaByKey = new Map();
+                for (const e of graphEdges) {
+                    edgeMetaByKey.set(_edgeKey(e), {
+                        render: e.render !== false,
+                        views: (e.views || []).slice(),
+                        canonical: e.from < e.to ? [e.from, e.to] : [e.to, e.from],
+                    });
+                }
+
                 for (let i = 0; i < samples.length; i++) {
                     const s = samples[i];
                     // Drive parent's robot pose so existing sendPotreePose forwards it.
