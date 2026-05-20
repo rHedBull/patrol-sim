@@ -1135,7 +1135,9 @@
 
         const NODE_HEIGHT = 0.5;  // default lift above floor for new nodes
         const EDGE_RADIUS = 0.05; // tube radius for edges (thicker = easier to click)
-        const VIEW_CONE_RADIUS = 0.04;
+        const VIEW_ARROW_SHAFT_RADIUS = 0.025;
+        const VIEW_ARROW_SHAFT_LENGTH = 0.55;
+        const VIEW_CONE_RADIUS = 0.10;
         const VIEW_CONE_LENGTH = 0.25;
         const edgeMaterialSkippedDashed = new THREE.LineDashedMaterial({
             color: 0x888888, dashSize: 0.15, gapSize: 0.10, transparent: true, opacity: 0.6,
@@ -1211,20 +1213,32 @@
         }
 
         function _makeViewCone(midVec3, lookDir, edgeFrom, edgeTo, viewIndex) {
+            // Group acts as the draggable handle: thin cylinder shaft from the
+            // midpoint outward + cone tip at the far end. Default axis is +Y.
+            const group = new THREE.Group();
+
+            const shaftGeom = new THREE.CylinderGeometry(
+                VIEW_ARROW_SHAFT_RADIUS, VIEW_ARROW_SHAFT_RADIUS, VIEW_ARROW_SHAFT_LENGTH, 8,
+            );
+            shaftGeom.translate(0, VIEW_ARROW_SHAFT_LENGTH / 2, 0);
+            const shaft = new THREE.Mesh(shaftGeom, viewConeMaterial);
+            group.add(shaft);
+
             const coneGeom = new THREE.ConeGeometry(VIEW_CONE_RADIUS, VIEW_CONE_LENGTH, 12);
+            coneGeom.translate(0, VIEW_ARROW_SHAFT_LENGTH + VIEW_CONE_LENGTH / 2, 0);
             const cone = new THREE.Mesh(coneGeom, viewConeMaterial);
-            // ConeGeometry default axis is +Y; we want the cone tip to point along lookDir.
-            // Translate up by half-length so the base sits at the midpoint and the tip extends out.
-            coneGeom.translate(0, VIEW_CONE_LENGTH / 2, 0);
-            cone.position.copy(midVec3);
-            cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), lookDir.clone().normalize());
-            cone.userData = {
-                kind: 'edgeView',
-                edgeFrom,
-                edgeTo,
-                viewIndex,
-            };
-            return cone;
+            group.add(cone);
+
+            group.position.copy(midVec3);
+            group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), lookDir.clone().normalize());
+
+            const ud = { kind: 'edgeView', edgeFrom, edgeTo, viewIndex };
+            group.userData = ud;
+            // Tag children too so raycaster hits on shaft/cone resolve to the
+            // same logical handle (callers walk up via hit.object).
+            shaft.userData = ud;
+            cone.userData = ud;
+            return group;
         }
 
         function renderGraph() {
@@ -2009,7 +2023,7 @@
             if (editMode && !connectMode && selectedEdgeKey && graphViewCones.length > 0) {
                 getMousePosition(e, orbitContainer);
                 raycaster.setFromCamera(mouse, orbitCamera);
-                const hits = raycaster.intersectObjects(graphViewCones, false);
+                const hits = raycaster.intersectObjects(graphViewCones, true);
                 if (hits.length > 0) {
                     const cone = hits[0].object;
                     const ud = cone.userData;
