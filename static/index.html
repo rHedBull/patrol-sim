@@ -619,6 +619,7 @@
         // Graph data: nodes and edges
         let graphNodes = [];       // [{id, position: [x,y,z]}]
         let graphEdges = [];       // [{from, to, render?: bool, views?: [{side, tilt}]}]
+        let selectedEdgeKey = null;
         let graphNodeMeshes = {};  // id -> THREE.Mesh
         let graphEdgeLines = [];   // THREE.Line objects in scene
         let startNodeId = null;    // designated start node
@@ -1024,6 +1025,10 @@
         const nodeMaterialTarget = new THREE.MeshPhongMaterial({ color: 0xff4444 });
         const nodeMaterialStart = new THREE.MeshPhongMaterial({ color: 0x2196f3 });
         const edgeMaterial = new THREE.MeshPhongMaterial({ color: 0xcccccc, transparent: true, opacity: 0.7 });
+        const edgeMaterialDefault = edgeMaterial; // keep original reference
+        const edgeMaterialWithViews = new THREE.MeshPhongMaterial({ color: 0x55ddee, transparent: true, opacity: 0.85 });
+        const edgeMaterialSkipped = new THREE.MeshPhongMaterial({ color: 0x666666, transparent: true, opacity: 0.35 });
+        const edgeMaterialSelected = new THREE.MeshPhongMaterial({ color: 0xffaa00, transparent: true, opacity: 0.95 });
         const pathHighlightMaterial = new THREE.MeshPhongMaterial({ color: 0x00aaff });
 
         // Group for all graph objects
@@ -1047,6 +1052,7 @@
         // cm-rounded (x,z); invalidate when a node's X/Z changes.
         const groundYCache = new Map();
         const groundKey = (x, z) => `${Math.round(x * 100)}|${Math.round(z * 100)}`;
+        function _edgeKey(e) { return e.from < e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
 
         function getGroundYAt(x, z, fallbackY) {
             const key = groundKey(x, z);
@@ -1120,7 +1126,17 @@
                 const mid = from.clone().add(to).multiplyScalar(0.5);
 
                 const cylGeom = new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6);
-                const cyl = new THREE.Mesh(cylGeom, edgeMaterial);
+                let mat;
+                if (selectedEdgeKey && _edgeKey(edge) === selectedEdgeKey) {
+                    mat = edgeMaterialSelected;
+                } else if (edge.render === false) {
+                    mat = edgeMaterialSkipped;
+                } else if (edge.views && edge.views.length > 0) {
+                    mat = edgeMaterialWithViews;
+                } else {
+                    mat = edgeMaterialDefault;
+                }
+                const cyl = new THREE.Mesh(cylGeom, mat);
                 cyl.position.copy(mid);
                 // Align cylinder along the direction
                 cyl.quaternion.setFromUnitVectors(
