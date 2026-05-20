@@ -33,6 +33,8 @@ Frontend changes are intentionally scoped to `static/index.html` rather than int
 - **DOM building:** never use `innerHTML` with interpolated values (a `PreToolUse` security hook blocks it). Build elements with `document.createElement` and assign `textContent` / properties directly.
 - **Commit cadence:** one commit per task (after all steps pass). Commit messages follow the existing pattern (`feat(...)`, `feat(graph):`, `feat(render):`, etc.).
 - **Commands assume cwd = worktree root** `/home/hendrik/coding/engine/tools/walker/robot-patrol-sim/.claude/worktrees/edge-aux-views/`.
+- **Out of scope:** no accessibility/ARIA work on the Edge Panel; no keyboard shortcuts (Esc/Enter). The spec doesn't require them and the rest of the UI doesn't have them.
+- **Line numbers** in this plan refer to the current worktree HEAD. Spot-check before editing — if drift is large (>20 lines), re-grep with the snippets cited.
 
 ---
 
@@ -433,18 +435,12 @@ git commit -m "feat(graph): direction-mirror helper for traversal-aware views"
 ## Task 4: Server `/api/render_frame` accepts `view` and migrates legacy manifests
 
 **Files:**
-- Modify: `server.py` (around the existing `save_render_frame` at line ~441)
+- Modify: `server.py` — `save_render_frame` at **L307** (decorator at L306). Uses the module-level `RENDERS_DIR` global (defined at L31, set per-scene in `__main__` at L539). No scene parameter is read from the request — the active scene is implicit in `RENDERS_DIR`.
 - Create: `tests/test_server.py`
 
-- [ ] **Step 1: Inspect how the scenes root is configured**
+- [ ] **Step 1: Write failing server tests**
 
-```bash
-grep -n "SCENES_ROOT\|scenes_root\|--scenes-root\|_scene_dir\b" server.py
-```
-
-If the scenes root is only set via CLI arg, **first** add an `os.environ.get("SCENES_ROOT")` fallback so the test fixture can isolate writes without forking a subprocess. Keep the change minimal — one extra line in the resolution logic. Document the env var name in a comment.
-
-- [ ] **Step 2: Write failing server tests**
+The fixture below monkey-patches `RENDERS_DIR` directly on the imported `server` module (no env var, no module reload). This works because Flask routes resolve `RENDERS_DIR` via module attribute lookup on each call. We avoid `importlib.reload(srv)` — the module's CLI-driven `__main__` block won't run, so reloading wouldn't fix anything.
 
 Create `tests/test_server.py`:
 
@@ -467,19 +463,16 @@ PNG_1x1 = (
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("SCENES_ROOT", str(tmp_path))
-    import importlib
     import server as srv
-    importlib.reload(srv)
+    renders_dir = tmp_path / "renders" / "scene1"
+    renders_dir.mkdir(parents=True)
+    monkeypatch.setattr(srv, "RENDERS_DIR", renders_dir)
     srv.app.config["TESTING"] = True
-    scene_dir = tmp_path / "scene1"
-    (scene_dir / "graphs").mkdir(parents=True)
-    (scene_dir / "renders").mkdir(parents=True)
     with srv.app.test_client() as c:
-        yield c, scene_dir
+        yield c, renders_dir
 
 
-def _post_frame(client, *, scene, name, index, view=None, pose=None):
+def _post_frame(client, *, name, index, view=None, pose=None):
     body = {
         "name": name,
         "index": index,
@@ -489,7 +482,7 @@ def _post_frame(client, *, scene, name, index, view=None, pose=None):
     if view is not None:
         body["view"] = view
     return client.post(
-        f"/api/render_frame?scene={scene}",
+        "/api/render_frame",
         data=json.dumps(body),
         content_type="application/json",
     )
@@ -497,19 +490,19 @@ def _post_frame(client, *, scene, name, index, view=None, pose=None):
 
 class TestRenderFrameViews:
     def test_default_view_is_forward(self, client):
-        c, scene_dir = client
-        r = _post_frame(c, scene="scene1", name="run1", index=0)
+        c, renders_dir = client
+        r = _post_frame(c, name="run1", index=0)
         assert r.status_code == 200
-        manifest = json.loads((scene_dir / "renders" / "run1" / "manifest.json").read_text())
+        manifest = json.loads((renders_dir / "run1" / "manifest.json").read_text())
         assert manifest["frames"][0]["view"] == "forward"
         assert manifest["frames"][0]["file"] == "frame_0000.png"
 
     def test_view_suffix_creates_distinct_filename(self, client):
-        c, scene_dir = client
-        _post_frame(c, scene="scene1", name="run1", index=0)
-        r = _post_frame(c, scene="scene1", name="run1", index=0, view="L+10")
+        c, renders_dir = client
+        _post_frame(c, name="run1", index=0)
+        r = _post_frame(c, name="run1", index=0, view="L+10")
         assert r.status_code == 200
-        out = scene_dir / "renders" / "run1"
+        out = renders_dir / "run1"
         assert (out / "frame_0000.png").exists()
         assert (out / "frame_0000__L+10.png").exists()
         manifest = json.loads((out / "manifest.json").read_text())
@@ -517,35 +510,35 @@ class TestRenderFrameViews:
         assert views == ["L+10", "forward"]
 
     def test_dedupe_replaces_same_index_and_view(self, client):
-        c, scene_dir = client
-        _post_frame(c, scene="scene1", name="run1", index=0, view="L+10")
-        _post_frame(c, scene="scene1", name="run1", index=0, view="L+10")
-        manifest = json.loads((scene_dir / "renders" / "run1" / "manifest.json").read_text())
+        c, renders_dir = client
+        _post_frame(c, name="run1", index=0, view="L+10")
+        _post_frame(c, name="run1", index=0, view="L+10")
+        manifest = json.loads((renders_dir / "run1" / "manifest.json").read_text())
         assert sum(1 for f in manifest["frames"] if f["view"] == "L+10") == 1
 
     def test_legacy_manifest_entries_get_forward_view(self, client):
-        c, scene_dir = client
-        out = scene_dir / "renders" / "run1"
+        c, renders_dir = client
+        out = renders_dir / "run1"
         out.mkdir()
         (out / "manifest.json").write_text(json.dumps({
             "name": "run1", "scene": "scene1",
             "frames": [{"index": 0, "file": "frame_0000.png", "position": [0, 0, 0]}],
         }))
-        _post_frame(c, scene="scene1", name="run1", index=1, view="forward")
+        _post_frame(c, name="run1", index=1, view="forward")
         manifest = json.loads((out / "manifest.json").read_text())
         legacy = next(f for f in manifest["frames"] if f["index"] == 0)
         assert legacy["view"] == "forward"
 ```
 
-- [ ] **Step 3: Run to verify failure**
+- [ ] **Step 2: Run to verify failure**
 
 ```bash
 uv run pytest tests/test_server.py -v
 ```
 
-- [ ] **Step 4: Update `save_render_frame` in `server.py`**
+- [ ] **Step 3: Update `save_render_frame` in `server.py`**
 
-Replace the function body (currently `server.py:441-482`):
+Replace the body of `save_render_frame` (starts at L307). Keep using `RENDERS_DIR` and `RENDERS_DIR.name` as before — the only changes are: read optional `view`, suffix the filename, normalize legacy manifest entries, dedupe by `(index, view)`.
 
 ```python
 @app.route("/api/render_frame", methods=["POST"])
@@ -555,7 +548,8 @@ def save_render_frame():
     Body: ``{name, index, view?, png_b64, pose}``. ``view`` defaults to
     ``"forward"``; non-forward views are written to
     ``frame_NNNN__<view>.png``. Dedupe key is ``(index, view)``; legacy
-    entries without ``view`` are normalized to ``forward`` in-place.
+    entries without ``view`` are normalized to ``forward`` in-place on
+    every write.
     """
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
@@ -571,8 +565,7 @@ def save_render_frame():
     if not png_b64:
         return jsonify({"error": "Missing png_b64"}), 400
 
-    scene = _scene_from_request()
-    out_dir = _scene_renders_dir(scene) / name
+    out_dir = RENDERS_DIR / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = "" if view == "forward" else f"__{view}"
@@ -580,7 +573,7 @@ def save_render_frame():
     frame_path.write_bytes(base64.b64decode(png_b64))
 
     manifest_path = out_dir / "manifest.json"
-    manifest = {"name": name, "scene": scene, "frames": []}
+    manifest = {"name": name, "scene": RENDERS_DIR.name, "frames": []}
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
@@ -604,14 +597,14 @@ def save_render_frame():
     return jsonify({"ok": True, "path": str(frame_path)})
 ```
 
-- [ ] **Step 5: Run server + full suite**
+- [ ] **Step 4: Run server tests and full suite**
 
 ```bash
 uv run pytest tests/test_server.py -v
 uv run pytest -v
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add server.py tests/test_server.py
@@ -696,11 +689,11 @@ git commit -m "feat(graph-ui): preserve render/views metadata across edge load/s
 ## Task 6: Frontend — edge visual styling (views tint, skip dashed)
 
 **Files:**
-- Modify: `static/index.html` (renderGraph at ~L1069, edge material declarations at ~L1108)
+- Modify: `static/index.html` — `renderGraph` at **L1069**; `edgeMaterial` declaration at **L1026**; state declarations at **L621**.
 
 - [ ] **Step 1: Add new edge materials**
 
-After the existing `edgeMaterial` line (~L1108):
+After the existing `edgeMaterial` line (L1026):
 
 ```js
 const edgeMaterialDefault = edgeMaterial; // keep original reference
@@ -711,7 +704,7 @@ const edgeMaterialSelected = new THREE.MeshPhongMaterial({ color: 0xffaa00, tran
 
 - [ ] **Step 2: Add a canonical key helper next to graph state**
 
-Near the other top-of-file helpers (after `groundKey` at ~L1131):
+Near the other top-of-file helpers (after the existing `groundKey` helper, just below the `EDGE_RADIUS` constant near line ~L1050):
 
 ```js
 function _edgeKey(e) { return e.from < e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
@@ -762,14 +755,14 @@ git commit -m "feat(graph-ui): edge styling for views (cyan) and skipped (faded)
 ## Task 7: Frontend — Edge Panel UI (selection, render toggle, views editor)
 
 **Files:**
-- Modify: `static/index.html` (controls block, edit handlers)
+- Modify: `static/index.html` — graph-edit controls block (the `Connect Nodes` button is at **L494**, `Save Graph` at **L497**), edit-mode click handler at **L1831**, and the global `class="rl"` style scope (only applies inside `#plan-controls`, `#orbit-render-controls`, `#orbit-controls` per L273/L298/L326).
 
 - [ ] **Step 1: Add the Edge Panel DOM**
 
-Locate the graph-edit controls (search for the "Connect Nodes" button). Add a sibling container, initially hidden:
+Insert after the `Save Graph` button (L497) — sibling, outside any of the `.rl`-scoped containers. **Do not** add `class="rl"` (it would be a no-op + misleading). Inline styles are used for layout to avoid touching the stylesheet for this small panel:
 
 ```html
-<div id="edge-panel" class="rl" style="display:none; margin-top:8px; padding:6px; border:1px solid #444;">
+<div id="edge-panel" style="display:none; margin-top:8px; padding:6px; border:1px solid #444; color:#ddd; font-size:12px;">
     <div id="edge-panel-header" style="display:flex; gap:6px; align-items:center;">
         <strong>Edge:</strong>
         <span id="edge-panel-label">-</span>
@@ -916,7 +909,7 @@ edgeViewsContainer.addEventListener('click', (ev) => {
 
 - [ ] **Step 3: Wire selection on edge click; drop direct click-to-delete**
 
-Find the edit-mode click handler around `getEdgeAtMouse` (~L1831). The code currently filters `graphEdges` to delete the hit edge. Replace that branch with selection:
+The edit-mode click handler around `getEdgeAtMouse` is at **L1831**. The code currently filters `graphEdges` to delete the hit edge. The other `graphEdges = graphEdges.filter(...)` calls at **L1973**, **L2021**, **L2033** are the node-removal cascade (clearing edges attached to a deleted *node*) — leave those alone. Replace only the L1831 branch:
 
 ```js
 if (editMode && !connectMode) {
@@ -954,7 +947,7 @@ git commit -m "feat(graph-ui): edge selection panel with render toggle and views
 ## Task 8: Frontend — `arcLengthSample` yields segment index; renderPlanFrames threads node ids
 
 **Files:**
-- Modify: `static/index.html` (`arcLengthSample` ~L2244, `renderPlanFrames` ~L2296)
+- Modify: `static/index.html` — `arcLengthSample` at **L2169**, `renderPlanFrames` at **L2214**.
 
 - [ ] **Step 1: Extend `arcLengthSample` output**
 
@@ -1010,7 +1003,9 @@ git commit -m "feat(render): expose segment index from arcLengthSample; thread n
 ## Task 9: Frontend — per-segment skip + multi-view capture
 
 **Files:**
-- Modify: `static/index.html` (`renderPlanFrames` loop body ~L2350, `refreshPlanUI`)
+- Modify: `static/index.html` — `renderPlanFrames` body starts at **L2214**; the per-sample `for` loop is inside it. `refreshPlanUI` is in the same file (grep `function refreshPlanUI` for its current line).
+
+**Perf note:** every non-skipped sample now triggers `1 + N` Potree captures where `N` ≤ 3. Each capture has its own `stableFrames + maxMs` settle window, so a route with full 3-view edges takes ~4× the time of today's forward-only run. The 80ms head-start sleep before each capture is per-view, not per-sample. This is acceptable for the inspection use-case but worth knowing during manual verification — pick a small graph for the first end-to-end test.
 
 - [ ] **Step 1: Replace the per-sample body with per-edge logic**
 
@@ -1110,16 +1105,14 @@ Delete the previous forward-only capture-and-POST block this replaces.
 
 - [ ] **Step 2: Gate the Edge Panel while a render is active**
 
-Extend `refreshPlanUI()` (existing helper) so it disables the panel inputs and the Save button when `planActive`:
+Extend `refreshPlanUI()` (existing helper) so it disables the panel inputs and the Save button when `planActive`. The Save Graph button id is `btn-save-graph` (confirmed at static/index.html:497):
 
 ```js
 const editingDisabled = planActive;
 edgePanel.querySelectorAll('input, button, select').forEach(el => { el.disabled = editingDisabled; });
-const saveBtn = document.getElementById('save-graph');
+const saveBtn = document.getElementById('btn-save-graph');
 if (saveBtn) saveBtn.disabled = editingDisabled;
 ```
-
-(Find the actual id of the "Save Graph" button by grepping `Save Graph` in `static/index.html`; substitute that id if different.)
 
 - [ ] **Step 3: Browser-verify full capture flow**
 
