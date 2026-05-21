@@ -45,6 +45,7 @@ Edges render as grey tubes at node height. In **Connect Nodes** mode, clicking a
 Selecting an edge in edit mode opens the Edge Panel:
 
 - **Render this edge** — when unticked, the route still traverses this edge but no frames are captured along it. Skipped edges render as **dashed grey lines** instead of solid tubes for an unambiguous "will not render" signal.
+- **Capture forward frame** — when unticked (and "Render this edge" stays on), samples on this edge skip the `frame_NNNN.png` forward capture but still produce any roll-view frames attached to the edge. Use it when you only want side views on a given segment.
 - **Views** — up to 3 extra captures per arc-length sample on the edge. Each view is a single `roll_deg` (`0..359`) — a rotation around the edge axis that sets where the camera looks:
   - `0°` = straight up (world-up projected onto the perpendicular plane)
   - `90°` = right of traversal

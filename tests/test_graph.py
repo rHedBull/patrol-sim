@@ -112,6 +112,7 @@ class TestEdgeMeta:
     def test_default_render_is_true_and_views_empty(self):
         meta = EdgeMeta()
         assert meta.render is True
+        assert meta.render_forward is True
         assert meta.views == []
 
     def test_view_accepts_roll_in_range(self):
@@ -146,6 +147,22 @@ class TestEdgeMetaApi:
         g.set_edge_render("A", "B", False)
         assert g.get_edge_meta("A", "B").render is False
         assert g.get_edge_meta("B", "A").render is False  # symmetric
+
+    def test_set_edge_render_forward_round_trip(self):
+        g = self._g()
+        g.set_edge_render_forward("A", "B", False)
+        m = g.get_edge_meta("A", "B")
+        assert m.render is True              # global render still on
+        assert m.render_forward is False
+        assert g.get_edge_meta("B", "A").render_forward is False  # symmetric
+
+    def test_set_edge_render_forward_preserves_other_fields(self):
+        g = self._g()
+        g.set_edge_views("A", "B", [View(roll_deg=90)])
+        g.set_edge_render_forward("A", "B", False)
+        m = g.get_edge_meta("A", "B")
+        assert m.render_forward is False
+        assert [v.roll_deg for v in m.views] == [90]
 
     def test_set_edge_views_rejects_more_than_three(self):
         g = self._g()
@@ -184,7 +201,19 @@ class TestEdgeMetaRoundTrip:
         d = g.to_dict()
         edge = d["edges"][0]
         assert "render" not in edge
+        assert "render_forward" not in edge
         assert "views" not in edge
+
+    def test_render_forward_round_trip(self):
+        g = NavGraph()
+        g.add_node("A", (0, 0, 0))
+        g.add_node("B", (1, 0, 0))
+        g.add_edge("A", "B")
+        g.set_edge_render_forward("A", "B", False)
+        d = g.to_dict()
+        assert d["edges"][0]["render_forward"] is False
+        g2 = NavGraph.from_dict(d)
+        assert g2.get_edge_meta("A", "B").render_forward is False
 
     def test_render_flag_round_trip(self):
         g = NavGraph()
