@@ -50,6 +50,7 @@ def views_in_traversal_direction(views: list[View], *, reversed_: bool) -> list[
 @dataclass
 class EdgeMeta:
     render: bool = True
+    render_forward: bool = True  # when False, skip the forward capture but keep views
     views: list[View] = field(default_factory=list)
 
 
@@ -129,7 +130,21 @@ class NavGraph:
         self._require_edge(a, b)
         key = self._edge_key(a, b)
         meta = self._edge_meta.get(key) or EdgeMeta()
-        self._edge_meta[key] = EdgeMeta(render=bool(render), views=list(meta.views))
+        self._edge_meta[key] = EdgeMeta(
+            render=bool(render),
+            render_forward=meta.render_forward,
+            views=list(meta.views),
+        )
+
+    def set_edge_render_forward(self, a: str, b: str, render_forward: bool) -> None:
+        self._require_edge(a, b)
+        key = self._edge_key(a, b)
+        meta = self._edge_meta.get(key) or EdgeMeta()
+        self._edge_meta[key] = EdgeMeta(
+            render=meta.render,
+            render_forward=bool(render_forward),
+            views=list(meta.views),
+        )
 
     def set_edge_views(self, a: str, b: str, views: list[View]) -> None:
         self._require_edge(a, b)
@@ -143,7 +158,11 @@ class NavGraph:
             seen.add(k)
         key = self._edge_key(a, b)
         meta = self._edge_meta.get(key) or EdgeMeta()
-        self._edge_meta[key] = EdgeMeta(render=meta.render, views=list(views))
+        self._edge_meta[key] = EdgeMeta(
+            render=meta.render,
+            render_forward=meta.render_forward,
+            views=list(views),
+        )
 
     # ── A* pathfinding ───────────────────────────────────────────────
 
@@ -210,6 +229,8 @@ class NavGraph:
             return entry
         if meta.render is False:
             entry["render"] = False
+        if meta.render_forward is False:
+            entry["render_forward"] = False
         if meta.views:
             entry["views"] = [{"roll_deg": v.roll_deg} for v in meta.views]
         return entry
@@ -248,6 +269,8 @@ class NavGraph:
                 graph.add_edge(a, b)
                 if "render" in edge:
                     graph.set_edge_render(a, b, bool(edge["render"]))
+                if "render_forward" in edge:
+                    graph.set_edge_render_forward(a, b, bool(edge["render_forward"]))
                 if "views" in edge:
                     views = [View(roll_deg=float(v["roll_deg"])) for v in edge["views"]]
                     graph.set_edge_views(a, b, views)

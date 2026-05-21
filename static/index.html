@@ -510,6 +510,9 @@
                     <label style="display:block; margin-top:4px;">
                         <input type="checkbox" id="edge-render" checked> Render this edge
                     </label>
+                    <label style="display:block; margin-top:2px; opacity:0.9;">
+                        <input type="checkbox" id="edge-render-forward" checked> Capture forward frame
+                    </label>
                     <div id="edge-views" style="margin-top:4px;"></div>
                     <button id="edge-add-view" type="button">+ Add view</button>
                 </div>
@@ -1818,6 +1821,7 @@
         const edgePanel = document.getElementById('edge-panel');
         const edgePanelLabel = document.getElementById('edge-panel-label');
         const edgeRenderCheckbox = document.getElementById('edge-render');
+        const edgeRenderForwardCheckbox = document.getElementById('edge-render-forward');
         const edgeViewsContainer = document.getElementById('edge-views');
         const edgeDeleteBtn = document.getElementById('edge-delete');
         const edgeAddViewBtn = document.getElementById('edge-add-view');
@@ -1836,6 +1840,7 @@
             selectedEdgeKey = _edgeKey(e);
             edgePanelLabel.textContent = `${_shortId(e.from)} <-> ${_shortId(e.to)}`;
             edgeRenderCheckbox.checked = e.render !== false;
+            edgeRenderForwardCheckbox.checked = e.render_forward !== false;
             renderEdgeViewsList(e);
             edgePanel.style.display = '';
             renderGraph();
@@ -1899,6 +1904,14 @@
         edgeRenderCheckbox.addEventListener('change', () => {
             const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
             e.render = edgeRenderCheckbox.checked;
+            renderGraph();
+        });
+
+        edgeRenderForwardCheckbox.addEventListener('change', () => {
+            const e = _findEdgeByKey(selectedEdgeKey); if (!e) return;
+            e.render_forward = edgeRenderForwardCheckbox.checked;
+            // No visual change to the tube (per design), but renderGraph is
+            // cheap and keeps any future indicator in sync.
             renderGraph();
         });
 
@@ -2431,7 +2444,7 @@
             );
             if (exists) return;
 
-            const edgeData = { from: fromId, to: toId, render: true, views: [] };
+            const edgeData = { from: fromId, to: toId, render: true, render_forward: true, views: [] };
 
             try {
                 const response = await fetch('/api/graph/edge', {
@@ -2717,6 +2730,7 @@
                 for (const e of graphEdges) {
                     edgeMetaByKey.set(_edgeKey(e), {
                         render: e.render !== false,
+                        render_forward: e.render_forward !== false,
                         views: (e.views || []).slice(),
                         canonical: e.from < e.to ? [e.from, e.to] : [e.to, e.from],
                     });
@@ -2728,7 +2742,7 @@
                     const b = pathIds[s.seg + 1];
                     const metaKey = a < b ? `${a}|${b}` : `${b}|${a}`;
                     const meta = edgeMetaByKey.get(metaKey)
-                              || { render: true, views: [], canonical: [a, b] };
+                              || { render: true, render_forward: true, views: [], canonical: [a, b] };
 
                     if (!meta.render) {
                         progress.textContent = `sample ${i+1}/${samples.length}: skipped (edge ${a.slice(-4)}<->${b.slice(-4)})`;
@@ -2789,12 +2803,14 @@
                     }
 
                     let captureStats = null;
-                    try {
-                        captureStats = await captureAndPost({ yaw: s.yaw, pitch: 0, viewCode: 'forward' });
-                    } catch (e) {
-                        console.error('forward capture failed at sample', i, e);
-                        progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
-                        continue;
+                    if (meta.render_forward) {
+                        try {
+                            captureStats = await captureAndPost({ yaw: s.yaw, pitch: 0, viewCode: 'forward' });
+                        } catch (e) {
+                            console.error('forward capture failed at sample', i, e);
+                            progress.textContent = `frame ${i+1}: capture failed (${e.message})`;
+                            continue;
+                        }
                     }
 
                     function _viewCodeRoll(rollDeg) {
@@ -3165,6 +3181,7 @@
                         from: e.from,
                         to: e.to,
                         render: e.render !== false,
+                        render_forward: e.render_forward !== false,
                         views: Array.isArray(e.views) ? e.views.slice() : [],
                     }));
                     startNodeId = data.start_node || null;
@@ -3253,6 +3270,7 @@
             return graphEdges.map(e => {
                 const out = { from: e.from, to: e.to };
                 if (e.render === false) out.render = false;
+                if (e.render_forward === false) out.render_forward = false;
                 if (e.views && e.views.length > 0) {
                     out.views = e.views.map(v => ({ roll_deg: v.roll_deg }));
                 }
