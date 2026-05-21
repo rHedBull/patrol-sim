@@ -2826,7 +2826,7 @@
                     const t = captureStats
                         ? `${captureStats.elapsedMs}ms ${(captureStats.lru/1e6).toFixed(1)}M pts`
                         : '';
-                    progress.textContent = `frame ${i+1}/${samples.length}  s=${s.arcLen.toFixed(1)}m  +${mirroredViews.length} views  ${t}`;
+                    progress.textContent = `frame ${i+1}/${samples.length}  s=${s.arcLen.toFixed(1)}m  +${meta.views.length} views  ${t}`;
                 }
                 const dt = ((performance.now() - t0) / 1000).toFixed(1);
                 progress.textContent = `done: ${samples.length} frames in ${dt}s → renders/${runName}/`;
